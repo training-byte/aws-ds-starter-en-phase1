@@ -4,32 +4,31 @@
 # dependencies = ["boto3>=1.35"]
 # ///
 """
-Preflight — 15 contrôles avant toute création de ressource.
+Preflight — 15 checks before creating any resource.
 
-Principe non négociable (§12) : aucune ressource n'est créée et aucun lab n'est
-exécuté tant que ce script n'est pas vert.
+Non-negotiable principle (§12): no resource is created and no lab is run until
+this script is green.
 
-Sortie : un tableau récapitulatif en console, un rapport `preflight-report.md`
-joignable tel quel à une demande d'accès, et un code de sortie 0 si tous les
-contrôles sont PASS ou SKIP, 1 dès qu'un seul est FAIL.
+Output: a summary table in the console, a `preflight-report.md` report that can
+be attached as-is to an access request, and an exit code of 0 if all checks are
+PASS or SKIP, 1 as soon as a single one is FAIL.
 
-Tous les contrôles sont exécutés même en cas d'échec, contrairement à une lecture
-littérale de §12 : un rapport partiel n'a aucune valeur face à l'IT. Mieux vaut une
-liste complète des droits manquants qu'un premier échec isolé.
+All checks run even after a failure, contrary to a literal reading of §12: a
+partial report has no value in front of IT. Better a complete list of missing
+rights than one isolated first failure.
 
-    uv run scripts/preflight.py               # mode apprenant : lectures seules,
-                                              # aucun appel d'écriture IAM
-    uv run scripts/preflight.py --formateur   # ajoute la sonde iam:CreateRole,
-                                              # requise avant `make socle-apply`
+    uv run scripts/preflight.py               # learner mode: reads only,
+                                              # no IAM write calls
+    uv run scripts/preflight.py --formateur   # adds the iam:CreateRole probe,
+                                              # required before `make socle-apply`
 
-Deux modes depuis la revue du 29/07/2026 (point 5) : la sonde iam:CreateRole est une
-API d'écriture privilégiée — trace CloudTrail, alertes sécurité — inadaptée à un poste
-apprenant. Elle est réservée à `--formateur` ; le mode par défaut s'en remet à la
-simulation IAM (lecture) et aux sondes non privilégiées des contrôles 4 à 10.
+Two modes since the 07/29/2026 review (point 5): the iam:CreateRole probe is a
+privileged write API — CloudTrail trace, security alerts — unsuited to a
+learner machine. It's reserved for `--formateur`; the default mode relies on
+IAM simulation (read) and the non-privileged probes of checks 4 through 10.
 
-Hygiène des secrets : aucune valeur de credential n'est affichée ni écrite. Seuls
-l'identifiant de compte et l'ARN de l'appelant apparaissent — de l'identité, pas
-du secret.
+Secret hygiene: no credential value is displayed or written. Only the account
+ID and the caller's ARN appear — identity, not secret.
 """
 
 from __future__ import annotations
@@ -44,33 +43,34 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Le preflight doit tourner sur une machine NEUVE, avant que l'environnement du projet
-# n'existe : c'est un script PEP 723 autonome, et le paquet `qc` n'y est donc pas
-# installé. D'où cet ajout au chemin d'import — la seule entorse à la disposition src/
-# du dépôt, et elle est délibérée : le contrôle n°13 vérifie justement que `uv sync`
-# fonctionne, il ne peut pas en dépendre.
+# Preflight must run on a BRAND-NEW machine, before the project's environment
+# exists: it's a standalone PEP 723 script, so the `qc` package isn't
+# installed there. Hence this addition to the import path — the only
+# deviation from the repo's src/ layout, and it's deliberate: check n°13
+# specifically verifies that `uv sync` works, so it can't depend on it.
 sys.path.insert(0, str(ROOT / "src"))
 
 from qc.config import ConfigError  # noqa: E402
 
-# `config` est construit paresseusement (PEP 562) : le nommer ici DÉCLENCHE sa
-# construction, donc un .env incomplet fait échouer l'import lui-même. Sans ce filet,
-# l'apprenant reçoit une trace d'appels de quinze lignes au tout premier script du J1 —
-# exactement le moment où il cherche à savoir quoi renseigner. Même leçon que D17.
+# `config` is built lazily (PEP 562): naming it here TRIGGERS its
+# construction, so an incomplete .env makes the import itself fail. Without
+# this safety net, the learner gets a fifteen-line traceback on their very
+# first Day 1 script — exactly when they're trying to figure out what to
+# fill in. Same lesson as D17.
 try:
     from qc.config import config  # noqa: E402
 except ConfigError as exc:
-    print(f"Configuration incomplète : {exc}", file=sys.stderr)
-    print("Le preflight ne peut rien contrôler tant que .env n'est pas renseigné.", file=sys.stderr)
+    print(f"Incomplete configuration: {exc}", file=sys.stderr)
+    print("Preflight can't check anything until .env is filled in.", file=sys.stderr)
     raise SystemExit(1) from None
 
 REPORT = ROOT / "preflight-report.md"
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
-# Sortie non bufferisée : certains contrôles durent plusieurs minutes (résolution des
-# dépendances, terraform init). Sans flush, une sortie redirigée vers un fichier reste
-# vide jusqu'à la fin — l'opérateur croit le script bloqué.
+# Unbuffered output: some checks take several minutes (dependency
+# resolution, terraform init). Without flush, output redirected to a file
+# stays empty until the end — the operator thinks the script is stuck.
 print = functools.partial(print, flush=True)  # noqa: A001
 
 
@@ -81,7 +81,7 @@ class Result:
     status: str
     cause: str = ""
     action: str = ""
-    #: Le contrôle dépend du socle Terraform. Un FAIL est normal avant `make socle-apply`.
+    #: The check depends on the Terraform socle. A FAIL is normal before `make socle-apply`.
     needs_socle: bool = False
     details: list[str] = field(default_factory=list)
 
@@ -101,15 +101,15 @@ def record(
 ) -> Result:
     r = Result(number, name, status, cause, action, needs_socle, details or [])
     results.append(r)
-    icon = {PASS: "✓", FAIL: "✗", SKIP: "–"}[status]
-    suffix = "  (dépend du socle)" if needs_socle and status == FAIL else ""
+    icon = {PASS: "\u2713", FAIL: "\u2717", SKIP: "\u2013"}[status]
+    suffix = "  (depends on the socle)" if needs_socle and status == FAIL else ""
     print(f"  {icon} {number:>2}. {name}{suffix}")
     if cause:
         print(f"        {cause}")
     for line in r.details:
         print(f"        {line}")
     if action and status == FAIL:
-        print(f"        → {action}")
+        print(f"        \u2192 {action}")
     return r
 
 
@@ -124,17 +124,17 @@ def check_identity() -> str | None:
     except Exception as exc:  # noqa: BLE001
         record(
             1,
-            "Identité",
+            "Identity",
             FAIL,
-            f"sts:GetCallerIdentity échoue ({_code(exc)}).",
-            "Renseigner des credentials dans .env, ou vérifier le profil d'instance.",
+            f"sts:GetCallerIdentity fails ({_code(exc)}).",
+            "Set credentials in .env, or check the instance profile.",
         )
         return None
     record(
         1,
-        "Identité",
+        "Identity",
         PASS,
-        details=[f"compte {ident['Account']}", f"appelant {ident['Arn']}"],
+        details=[f"account {ident['Account']}", f"caller {ident['Arn']}"],
     )
     return ident["Arn"]
 
@@ -149,20 +149,20 @@ def check_region() -> None:
     except Exception as exc:  # noqa: BLE001
         record(
             2,
-            "Région",
+            "Region",
             SKIP,
-            f"Liste des régions non lisible ({_code(exc)}) — droit ec2:DescribeRegions.",
+            f"Region list unreadable ({_code(exc)}) — needs ec2:DescribeRegions.",
         )
         return
     if config.region in regions:
-        record(2, "Région", PASS, details=[f"AWS_REGION = {config.region}, activée"])
+        record(2, "Region", PASS, details=[f"AWS_REGION = {config.region}, enabled"])
     else:
         record(
             2,
-            "Région",
+            "Region",
             FAIL,
-            f"{config.region} ne figure pas dans les régions activées du compte.",
-            "Activer la région, ou corriger AWS_REGION dans .env.",
+            f"{config.region} isn't among the account's enabled regions.",
+            "Enable the region, or fix AWS_REGION in .env.",
         )
 
 
@@ -190,23 +190,24 @@ REQUIRED_ACTIONS = [
 ]
 
 
-def _probe_iam_write(raison: str, indices: list[str] | None = None) -> None:
-    """Teste RÉELLEMENT iam:CreateRole, sans créer quoi que ce soit. Mode FORMATEUR.
+def _probe_iam_write(reason: str, hints: list[str] | None = None) -> None:
+    """REALLY tests iam:CreateRole, without creating anything. TRAINER mode.
 
-    La sonde envoie un document de confiance volontairement invalide. IAM autorise
-    avant de valider, donc :
+    The probe sends a deliberately invalid trust document. IAM authorizes
+    before it validates, so:
 
-      - AccessDenied            → le droit manque, et le socle échouera à mi-parcours ;
-      - MalformedPolicyDocument → le droit est là, aucun rôle n'a été créé.
+      - AccessDenied            -> the right is missing, and the socle will fail partway through;
+      - MalformedPolicyDocument -> the right is there, no role was created.
 
-    C'est le seul moyen de connaître la réponse sans laisser derrière soi un rôle
-    fantôme dans un compte partagé par toute la promotion.
+    It's the only way to know the answer without leaving a ghost role behind
+    in an account shared by the whole cohort.
 
-    Revue du 29/07/2026, point 5 : même non mutante, c'est une API d'ÉCRITURE
-    privilégiée — trace CloudTrail iam:CreateRole au nom de l'appelant, alertes
-    sécurité sur un compte surveillé. Elle n'est donc émise qu'avec `--formateur`,
-    le seul profil qui a besoin de iam:CreateRole (`make socle-apply`). Le mode par
-    défaut, apprenant, n'émet AUCUN appel d'écriture IAM.
+    07/29/2026 review, point 5: even non-mutating, this is a privileged
+    WRITE API — a CloudTrail iam:CreateRole trace under the caller's name,
+    security alerts on a monitored account. It's therefore only issued with
+    `--formateur`, the only profile that needs iam:CreateRole (`make
+    socle-apply`). The default, learner mode issues NO IAM write call at
+    all.
     """
     try:
         config.client("iam").create_role(
@@ -219,8 +220,8 @@ def _probe_iam_write(raison: str, indices: list[str] | None = None) -> None:
                 3,
                 "Permissions",
                 PASS,
-                f"iam:CreateRole autorisé ({raison}, sonde directe non mutante).",
-                details=indices or [],
+                f"iam:CreateRole authorized ({reason}, direct non-mutating probe).",
+                details=hints or [],
             )
             return
         if code == "AccessDenied":
@@ -228,46 +229,48 @@ def _probe_iam_write(raison: str, indices: list[str] | None = None) -> None:
                 3,
                 "Permissions",
                 FAIL,
-                "iam:CreateRole REFUSÉ — le socle ne peut pas créer les rôles SageMaker.",
-                "Demander à l'IT iam:CreateRole, iam:PutRolePolicy, iam:GetRole et "
-                "iam:PassRole, restreints aux ressources nommées qc-*.",
+                "iam:CreateRole REFUSED — the socle can't create the SageMaker roles.",
+                "Ask IT for iam:CreateRole, iam:PutRolePolicy, iam:GetRole and "
+                "iam:PassRole, restricted to resources named qc-*.",
                 details=[
-                    "Sans ce droit, `make socle-apply` crée les buckets puis échoue",
-                    "sur les six rôles. Le J1 s'arrête à l'étape `train`.",
-                    *(indices or []),
+                    "Without this right, `make socle-apply` creates the buckets then fails",
+                    "on the six roles. Day 1 stops at the `train` step.",
+                    *(hints or []),
                 ],
             )
             return
-        record(3, "Permissions", SKIP, f"Sonde iam:CreateRole non concluante ({code}).")
+        record(3, "Permissions", SKIP, f"iam:CreateRole probe inconclusive ({code}).")
         return
 
-    # Ne devrait jamais arriver : un document vide n'est pas une politique valide.
-    record(3, "Permissions", SKIP, "Sonde iam:CreateRole inattendue — rôle possiblement créé.")
+    # Should never happen: an empty document isn't a valid policy.
+    record(3, "Permissions", SKIP, "Unexpected iam:CreateRole probe result — a role may have been created.")
 
 
 def check_permissions(caller_arn: str | None, formateur: bool = False) -> None:
     if not caller_arn:
-        record(3, "Permissions", SKIP, "Identité inconnue, contrôle impossible.")
+        record(3, "Permissions", SKIP, "Unknown identity, check impossible.")
         return
 
-    # simulate-principal-policy veut l'ARN du RÔLE, pas celui de la session assumée.
+    # simulate-principal-policy wants the ROLE's ARN, not the assumed
+    # session's.
     principal = caller_arn
     if ":assumed-role/" in caller_arn:
         account = caller_arn.split(":")[4]
         role = caller_arn.split("/")[1]
         principal = f"arn:aws:iam::{account}:role/{role}"
 
-    # Le verdict repose sur la SONDE RÉELLE, jamais sur la simulation.
+    # The verdict rests on the REAL PROBE, never on the simulation.
     #
-    # Motif, constaté le 27/07/2026 sur deux jeux de permissions successifs : appelée
-    # sans ARN de ressource, simulate_principal_policy renvoie « refusé » pour toute
-    # action couverte par une politique scopée à des ressources précises — c'est-à-dire
-    # la quasi-totalité d'entre elles. Le rapport annonçait s3:PutObject refusé pendant
-    # que le contrôle n°4, dans la même exécution, écrivait puis supprimait un objet
-    # pour de vrai. Un rapport qui se contredit lui-même ne vaut rien face à l'IT.
+    # Reason, observed on 07/27/2026 across two successive sets of
+    # permissions: called with no resource ARN, simulate_principal_policy
+    # returns "denied" for any action covered by a policy scoped to
+    # specific resources — i.e. almost all of them. The report announced
+    # s3:PutObject as denied while check n°4, in the same run, was really
+    # writing then deleting an object. A report that contradicts itself is
+    # worthless in front of IT.
     #
-    # La simulation reste utile comme indice, jamais comme verdict.
-    indices: list[str] = []
+    # The simulation stays useful as a hint, never as a verdict.
+    hints: list[str] = []
     denied: list[str] | None = None
     try:
         resp = config.client("iam").simulate_principal_policy(
@@ -279,46 +282,49 @@ def check_permissions(caller_arn: str | None, formateur: bool = False) -> None:
             if r["EvalDecision"] != "allowed"
         ]
         if denied:
-            indices = [
-                f"simulation : {len(denied)}/{len(REQUIRED_ACTIONS)} actions données pour refusées,",
-                "à confirmer par les contrôles 4 à 10 — la simulation ignore le scopage",
-                "par ressource et produit des faux refus.",
+            hints = [
+                f"simulation: {len(denied)}/{len(REQUIRED_ACTIONS)} actions reported as denied,",
+                "to confirm via checks 4 through 10 — the simulation ignores resource-level",
+                "scoping and produces false denials.",
             ]
         else:
-            indices = [f"simulation : {len(REQUIRED_ACTIONS)} actions autorisées"]
-        raison = "simulation disponible"
+            hints = [f"simulation: {len(REQUIRED_ACTIONS)} actions authorized"]
+        reason = "simulation available"
     except Exception as exc:  # noqa: BLE001
-        # Fréquent sur un rôle SSO. Ce cas produisait autrefois un SKIP, et ce SKIP a
-        # laissé passer un rôle dépourvu de iam:CreateRole : le blocage n'est apparu
-        # qu'au milieu du `terraform apply` du socle, six échecs à la suite.
-        raison = f"simulation indisponible ({_code(exc)})"
+        # Common on an SSO role. This case used to produce a SKIP, and that
+        # SKIP let a role with no iam:CreateRole through: the blocker only
+        # showed up in the middle of the socle's `terraform apply`, six
+        # failures in a row.
+        reason = f"simulation unavailable ({_code(exc)})"
 
     if formateur:
-        _probe_iam_write(raison, indices)
+        _probe_iam_write(reason, hints)
         return
 
-    # Mode APPRENANT (défaut) : lectures seules, AUCUN appel d'écriture IAM — la sonde
-    # create_role est réservée à `--formateur` (voir _probe_iam_write). Un apprenant n'a
-    # de toute façon pas besoin de iam:CreateRole : seul `make socle-apply` crée des
-    # rôles, et c'est un geste formateur. Ses droits réels sont exercés par les
-    # contrôles 4 à 10, par sondes non privilégiées.
-    pied = [
-        "Mode apprenant : aucune sonde d'écriture IAM n'est émise.",
-        "Contrôle complet des droits du socle : `uv run scripts/preflight.py --formateur`.",
+    # LEARNER mode (default): reads only, NO IAM write call — the
+    # create_role probe is reserved for `--formateur` (see
+    # _probe_iam_write). A learner has no need for iam:CreateRole anyway:
+    # only `make socle-apply` creates roles, and that's a trainer action.
+    # Their real rights are exercised by checks 4 through 10, via
+    # non-privileged probes.
+    footer = [
+        "Learner mode: no IAM write probe is issued.",
+        "Full check of the socle's rights: `uv run scripts/preflight.py --formateur`.",
     ]
     if denied == []:
         record(
             3,
             "Permissions",
             PASS,
-            f"{raison} — les {len(REQUIRED_ACTIONS)} actions du parcours sont autorisées.",
-            details=pied,
+            f"{reason} — the {len(REQUIRED_ACTIONS)} actions of the course are authorized.",
+            details=footer,
         )
     else:
-        # Refus simulés (faux négatifs fréquents) ou simulation indisponible : le
-        # verdict appartient aux sondes réelles des contrôles suivants, pas à un FAIL
-        # ici — un rapport qui se contredit ne vaut rien face à l'IT.
-        record(3, "Permissions", SKIP, f"{raison}.", details=[*indices, *pied])
+        # Simulated denials (frequent false negatives) or simulation
+        # unavailable: the verdict belongs to the following checks' real
+        # probes, not to a FAIL here — a report that contradicts itself is
+        # worthless in front of IT.
+        record(3, "Permissions", SKIP, f"{reason}.", details=[*hints, *footer])
 
 
 # ============================================================================ 4
@@ -334,8 +340,8 @@ def check_s3() -> None:
             4,
             "S3",
             FAIL,
-            f"Bucket {bucket} inaccessible ({_code(exc)}).",
-            "Appliquer le socle Terraform, qui crée le bucket du groupe.",
+            f"Bucket {bucket} unreachable ({_code(exc)}).",
+            "Apply the Terraform socle, which creates the group's bucket.",
             needs_socle=True,
         )
         return
@@ -344,39 +350,39 @@ def check_s3() -> None:
     try:
         s3.put_object(Bucket=bucket, Key=key, Body=b"preflight")
         s3.delete_object(Bucket=bucket, Key=key)
-        details.append("écriture puis suppression : OK")
+        details.append("write then delete: OK")
     except Exception as exc:  # noqa: BLE001
         record(
             4,
             "S3",
             FAIL,
-            f"Écriture refusée dans {bucket} ({_code(exc)}).",
-            "Vérifier la politique du rôle du groupe sur ce bucket.",
+            f"Write refused on {bucket} ({_code(exc)}).",
+            "Check the group role's policy on this bucket.",
         )
         return
 
     try:
         s3.get_bucket_encryption(Bucket=bucket)
-        details.append("chiffrement au repos : activé")
+        details.append("encryption at rest: enabled")
     except Exception:  # noqa: BLE001
-        details.append("chiffrement au repos : ABSENT")
+        details.append("encryption at rest: ABSENT")
 
     try:
         pab = s3.get_public_access_block(Bucket=bucket)["PublicAccessBlockConfiguration"]
         details.append(
-            "blocage des accès publics : "
-            + ("total" if all(pab.values()) else "INCOMPLET")
+            "public access block: "
+            + ("full" if all(pab.values()) else "INCOMPLETE")
         )
     except Exception:  # noqa: BLE001
-        details.append("blocage des accès publics : NON CONFIGURÉ")
+        details.append("public access block: NOT CONFIGURED")
 
-    bad = [d for d in details if "ABSENT" in d or "INCOMPLET" in d or "NON" in d]
+    bad = [d for d in details if "ABSENT" in d or "INCOMPLETE" in d or "NOT" in d]
     record(
         4,
         "S3",
         FAIL if bad else PASS,
         f"{bucket}",
-        "Corriger le socle Terraform : chiffrement et blocage public sont exigés (§14).",
+        "Fix the Terraform socle: encryption and public-access blocking are required (§14).",
         details=details,
     )
 
@@ -397,32 +403,32 @@ def check_sagemaker_quotas() -> None:
     except Exception as exc:  # noqa: BLE001
         record(
             5,
-            "Quotas SageMaker",
+            "SageMaker quotas",
             SKIP,
-            f"Service Quotas non lisible ({_code(exc)}).",
-            details=[f"À vérifier en console : {needed} groupes simultanés attendus."],
+            f"Service Quotas unreadable ({_code(exc)}).",
+            details=[f"To verify in console: {needed} simultaneous groups expected."],
         )
         return
 
     for instance, kind, label in (
-        (config.train_instance, "training job usage", "entraînement"),
+        (config.train_instance, "training job usage", "training"),
         (config.endpoint_instance, "endpoint usage", "endpoint"),
     ):
         value = quotas.get(f"{instance} for {kind}".lower())
         if value is None:
-            details.append(f"{instance} ({label}) : quota introuvable")
+            details.append(f"{instance} ({label}): quota not found")
             continue
         got = int(value)
-        verdict = "OK" if got >= needed else "INSUFFISANT"
-        details.append(f"{instance} ({label}) : {got} pour {needed} groupes — {verdict}")
+        verdict = "OK" if got >= needed else "INSUFFICIENT"
+        details.append(f"{instance} ({label}): {got} for {needed} groups — {verdict}")
         ok &= got >= needed
 
     record(
         5,
-        "Quotas SageMaker",
+        "SageMaker quotas",
         PASS if ok else FAIL,
-        f"{needed} binômes déclarés (TEAMS_COUNT).",
-        "Demander une augmentation de quota : tous les groupes déploient en même temps.",
+        f"{needed} pairs declared (TEAMS_COUNT).",
+        "Request a quota increase: all groups deploy at the same time.",
         details=details,
     )
 
@@ -433,10 +439,10 @@ def check_sagemaker_role() -> None:
     if not arn:
         record(
             6,
-            "Rôle SageMaker",
+            "SageMaker role",
             FAIL,
-            "SAGEMAKER_ROLE_ARN non renseigné.",
-            "Demander au formateur l'extrait `.env` de votre groupe.",
+            "SAGEMAKER_ROLE_ARN not set.",
+            "Ask your trainer for your group's `.env` snippet.",
             needs_socle=True,
         )
         return
@@ -445,10 +451,10 @@ def check_sagemaker_role() -> None:
     except Exception as exc:  # noqa: BLE001
         record(
             6,
-            "Rôle SageMaker",
+            "SageMaker role",
             FAIL,
-            f"Rôle introuvable ou illisible ({_code(exc)}).",
-            "Vérifier SAGEMAKER_ROLE_ARN et le droit iam:GetRole.",
+            f"Role not found or unreadable ({_code(exc)}).",
+            "Check SAGEMAKER_ROLE_ARN and the iam:GetRole right.",
             needs_socle=True,
         )
         return
@@ -457,22 +463,23 @@ def check_sagemaker_role() -> None:
     trusted = "sagemaker.amazonaws.com" in doc
     record(
         6,
-        "Rôle SageMaker",
+        "SageMaker role",
         PASS if trusted else FAIL,
         f"{role['RoleName']}",
-        "La politique de confiance doit autoriser sagemaker.amazonaws.com.",
-        details=["confiance sagemaker.amazonaws.com : " + ("OK" if trusted else "ABSENTE")],
+        "The trust policy must authorize sagemaker.amazonaws.com.",
+        details=["sagemaker.amazonaws.com trust: " + ("OK" if trusted else "MISSING")],
     )
 
 
 # ============================================================================ 7
 def check_bedrock() -> None:
-    """Contrôle corrigé par rapport à §12 (décision D6).
+    """Check fixed relative to §12 (decision D6).
 
-    La spec d'origine exige que BEDROCK_MODEL_ID figure dans `list_foundation_models`.
-    C'est faux en Europe : les modèles récents s'invoquent via un profil d'inférence
-    préfixé `eu.` ou `global.`, qui n'apparaît que dans `list_inference_profiles`.
-    Et surtout, la présence au catalogue ne vaut pas accès — seul l'appel réel le prouve.
+    The original spec requires BEDROCK_MODEL_ID to appear in
+    `list_foundation_models`. That's wrong for Europe: recent models are
+    invoked via an inference profile prefixed `eu.` or `global.`, which
+    only appears in `list_inference_profiles`. And above all, being in the
+    catalog doesn't mean access — only the real call proves it.
     """
     model_id = config.bedrock_model_id
     if not model_id:
@@ -480,15 +487,15 @@ def check_bedrock() -> None:
             7,
             "Bedrock",
             FAIL,
-            "BEDROCK_MODEL_ID non renseigné.",
-            "Lancer `uv run scripts/discover.py` pour trouver un modèle activé.",
+            "BEDROCK_MODEL_ID not set.",
+            "Run `uv run scripts/discover.py` to find an enabled model.",
         )
         return
 
     details = []
     try:
         bedrock = config.client("bedrock")
-        catalogue = {
+        catalog = {
             m["modelId"] for m in bedrock.list_foundation_models()["modelSummaries"]
         }
         profiles = {
@@ -496,17 +503,17 @@ def check_bedrock() -> None:
             for p in bedrock.list_inference_profiles()["inferenceProfileSummaries"]
         }
         where = (
-            "catalogue"
-            if model_id in catalogue
-            else "profils d'inférence"
+            "catalog"
+            if model_id in catalog
+            else "inference profiles"
             if model_id in profiles
             else None
         )
         details.append(
-            f"référencé dans : {where}" if where else "NON référencé (catalogue ni profils)"
+            f"referenced in: {where}" if where else "NOT referenced (neither catalog nor profiles)"
         )
     except Exception as exc:  # noqa: BLE001
-        details.append(f"listing indisponible ({_code(exc)})")
+        details.append(f"listing unavailable ({_code(exc)})")
 
     runtime = config.client("bedrock-runtime")
 
@@ -521,26 +528,27 @@ def check_bedrock() -> None:
             7,
             "Bedrock",
             FAIL,
-            f"Appel Converse refusé sur {model_id} ({_code(exc)}).",
-            "Activer le modèle (console Bedrock → Model access) ou vérifier la "
-            "politique IAM du rôle. Voir décision D14.",
+            f"Converse call refused on {model_id} ({_code(exc)}).",
+            "Enable the model (Bedrock console -> Model access) or check the "
+            "role's IAM policy. See decision D14.",
             details=details,
         )
         return
 
-    details.append("appel Converse simple : OK")
+    details.append("simple Converse call: OK")
 
-    # Le tool use est la SEULE contrainte dure de l'agent du J2, et un modèle peut
-    # parfaitement accepter Converse tout en refusant le tool use (décision D15 : c'est
-    # exactement le cas de Mistral en mode streaming). Un preflight qui s'arrête à
-    # l'appel simple passerait au vert sur un modèle qui casse le lab de l'après-midi.
+    # Tool use is the agent's ONLY hard constraint on Day 2, and a model
+    # can perfectly well accept Converse while refusing tool use (decision
+    # D15: exactly Mistral's case in streaming mode). A preflight that
+    # stops at the simple call would go green on a model that breaks the
+    # afternoon lab.
     try:
         runtime.converse(
             modelId=model_id,
             messages=[
                 {
                     "role": "user",
-                    "content": [{"text": "Latence de l'endpoint qc-g01-endpoint ?"}],
+                    "content": [{"text": "Latency of the qc-g01-endpoint endpoint?"}],
                 }
             ],
             inferenceConfig={"maxTokens": 128},
@@ -549,7 +557,7 @@ def check_bedrock() -> None:
                     {
                         "toolSpec": {
                             "name": "get_endpoint_metrics",
-                            "description": "Latence moyenne d'un endpoint SageMaker.",
+                            "description": "Average latency of a SageMaker endpoint.",
                             "inputSchema": {
                                 "json": {
                                     "type": "object",
@@ -563,21 +571,21 @@ def check_bedrock() -> None:
             },
         )
     except Exception as exc:  # noqa: BLE001
-        details.append(f"tool use : REFUSÉ ({_code(exc)})")
+        details.append(f"tool use: REFUSED ({_code(exc)})")
         record(
             7,
             "Bedrock",
             FAIL,
-            f"{model_id} accepte Converse mais refuse le tool use.",
-            "Choisir un modèle supportant le tool use — l'agent du J2 en dépend. "
-            "Lancer `make probe` pour tester les candidats et le pilotage par Strands.",
+            f"{model_id} accepts Converse but refuses tool use.",
+            "Choose a model that supports tool use — Day 2's agent depends on it. "
+            "Run `make probe` to test candidates and Strands-driven piloting.",
             details=details,
         )
         return
 
-    details.append("tool use : OK")
+    details.append("tool use: OK")
     details.append(
-        "rappel D15 : Strands doit être instancié avec streaming=False sur ce modèle"
+        "reminder D15: Strands must be instantiated with streaming=False on this model"
     )
     record(7, "Bedrock", PASS, model_id, details=details)
 
@@ -592,16 +600,16 @@ def check_ecr() -> None:
             8,
             "ECR",
             FAIL,
-            f"get_authorization_token échoue ({_code(exc)}).",
-            "Ajouter ecr:GetAuthorizationToken au rôle du groupe.",
+            f"get_authorization_token fails ({_code(exc)}).",
+            "Add ecr:GetAuthorizationToken to the group's role.",
         )
         return
     try:
         ecr.describe_repositories(repositoryNames=[config.ecr_repo])
-        detail = f"dépôt {config.ecr_repo} : existe"
+        detail = f"repo {config.ecr_repo}: exists"
     except Exception:  # noqa: BLE001
-        detail = f"dépôt {config.ecr_repo} : absent (créé par le socle)"
-    record(8, "ECR", PASS, details=[detail, "jeton d'authentification : OK"])
+        detail = f"repo {config.ecr_repo}: absent (created by the socle)"
+    record(8, "ECR", PASS, details=[detail, "authorization token: OK"])
 
 
 # ============================================================================ 9
@@ -611,10 +619,10 @@ def check_ecs_alb_acm() -> None:
     try:
         clusters = config.client("ecs").describe_clusters(clusters=[config.ecs_cluster])
         found = bool(clusters["clusters"])
-        details.append(f"cluster {config.ecs_cluster} : " + ("OK" if found else "ABSENT"))
+        details.append(f"cluster {config.ecs_cluster}: " + ("OK" if found else "ABSENT"))
         ok &= found
     except Exception as exc:  # noqa: BLE001
-        details.append(f"cluster : erreur ({_code(exc)})")
+        details.append(f"cluster: error ({_code(exc)})")
         ok = False
 
     try:
@@ -622,43 +630,43 @@ def check_ecs_alb_acm() -> None:
             cluster=config.ecs_cluster, services=[config.ecs_service]
         )
         found = bool(svc["services"])
-        details.append(f"service {config.ecs_service} : " + ("OK" if found else "ABSENT"))
+        details.append(f"service {config.ecs_service}: " + ("OK" if found else "ABSENT"))
         ok &= found
     except Exception as exc:  # noqa: BLE001
-        details.append(f"service : erreur ({_code(exc)})")
+        details.append(f"service: error ({_code(exc)})")
         ok = False
 
-    # ACM : mode dégradé retenu (§14). Un ARN vide est la valeur NORMALE, pas un manque.
+    # ACM: degraded mode chosen (§14). An empty ARN is the NORMAL value, not a gap.
     if not config.acm_cert_arn:
-        details.append("ACM : non utilisé — mode dégradé HTTP assumé (§14)")
+        details.append("ACM: not used — degraded HTTP mode assumed (§14)")
     else:
         try:
             cert = config.client("acm").describe_certificate(
                 CertificateArn=config.acm_cert_arn
             )["Certificate"]
             issued = cert["Status"] == "ISSUED"
-            details.append(f"certificat ACM : {cert['Status']}")
+            details.append(f"ACM certificate: {cert['Status']}")
             ok &= issued
         except Exception as exc:  # noqa: BLE001
-            details.append(f"certificat ACM : erreur ({_code(exc)})")
+            details.append(f"ACM certificate: error ({_code(exc)})")
             ok = False
 
     if config.alb_dns_name:
         try:
             socket.gethostbyname(config.alb_dns_name)
-            details.append(f"{config.alb_dns_name} : résout")
+            details.append(f"{config.alb_dns_name}: resolves")
         except OSError:
-            details.append(f"{config.alb_dns_name} : NE RÉSOUT PAS")
+            details.append(f"{config.alb_dns_name}: DOES NOT RESOLVE")
             ok = False
     else:
-        details.append("ALB_DNS_NAME non renseigné")
+        details.append("ALB_DNS_NAME not set")
         ok = False
 
     record(
         9,
         "ECS / ALB / ACM",
         PASS if ok else FAIL,
-        action="Demander au formateur l'extrait `.env` de votre groupe.",
+        action="Ask your trainer for your group's `.env` snippet.",
         needs_socle=True,
         details=details,
     )
@@ -667,10 +675,11 @@ def check_ecs_alb_acm() -> None:
 # ============================================================================ 10
 def check_cloudwatch() -> None:
     logs = config.client("logs")
-    # Le nom de la sonde vit DANS le préfixe du groupe : le rôle workstation n'autorise
-    # les écritures logs que sous /ecs/qc-<TEAM_ID>-*. Un nom hors périmètre (l'ancien
-    # /preflight/<TEAM_ID>) faisait échouer ce contrôle sur tout poste apprenant alors
-    # que les droits réellement utiles étaient là — constaté le 10/08/2026.
+    # The probe's name lives INSIDE the group's prefix: the workstation
+    # role only allows log writes under /ecs/qc-<TEAM_ID>-*. A name outside
+    # that scope (the old /preflight/<TEAM_ID>) made this check fail on
+    # every learner machine even though the actually-needed rights were
+    # there — observed on 08/10/2026.
     name = f"/ecs/qc-{config.team_id}-preflight-probe"
     try:
         logs.create_log_group(logGroupName=name)
@@ -680,11 +689,11 @@ def check_cloudwatch() -> None:
             10,
             "CloudWatch Logs",
             FAIL,
-            f"Création/suppression d'un groupe de test refusée ({_code(exc)}).",
-            "Ajouter logs:CreateLogGroup et logs:DeleteLogGroup au rôle du groupe.",
+            f"Creating/deleting a test group was refused ({_code(exc)}).",
+            "Add logs:CreateLogGroup and logs:DeleteLogGroup to the group's role.",
         )
         return
-    record(10, "CloudWatch Logs", PASS, details=["création puis suppression : OK"])
+    record(10, "CloudWatch Logs", PASS, details=["create then delete: OK"])
 
 
 # ============================================================================ 11
@@ -694,8 +703,8 @@ def check_docker() -> None:
             11,
             "Docker",
             FAIL,
-            "Binaire docker introuvable.",
-            "Installer Docker. Sur les workstations, il est fourni par la golden AMI.",
+            "docker binary not found.",
+            "Install Docker. On the workstations, it's provided by the golden AMI.",
         )
         return
     details = []
@@ -703,28 +712,28 @@ def check_docker() -> None:
         subprocess.run(
             ["docker", "info"], capture_output=True, check=True, timeout=30
         )
-        details.append("démon : répond")
+        details.append("daemon: responding")
     except Exception:  # noqa: BLE001
         record(
             11,
             "Docker",
             FAIL,
-            "Le démon Docker ne répond pas.",
-            "Démarrer le service Docker.",
+            "The Docker daemon isn't responding.",
+            "Start the Docker service.",
         )
         return
     try:
         out = subprocess.run(
             ["docker", "buildx", "ls"], capture_output=True, text=True, timeout=30
         ).stdout
-        details.append("buildx : disponible")
+        details.append("buildx: available")
         amd64 = "linux/amd64" in out
-        details.append("plateforme linux/amd64 : " + ("supportée" if amd64 else "ABSENTE"))
+        details.append("linux/amd64 platform: " + ("supported" if amd64 else "ABSENT"))
         record(11, "Docker", PASS if amd64 else FAIL, details=details,
-               action="Activer l'émulation linux/amd64 (§11 impose cette plateforme).")
+               action="Enable linux/amd64 emulation (§11 requires this platform).")
     except Exception:  # noqa: BLE001
-        details.append("buildx : ABSENT")
-        record(11, "Docker", FAIL, action="Installer docker buildx.", details=details)
+        details.append("buildx: ABSENT")
+        record(11, "Docker", FAIL, action="Install docker buildx.", details=details)
 
 
 # ============================================================================ 12
@@ -734,8 +743,8 @@ def check_terraform() -> None:
             12,
             "Terraform",
             FAIL,
-            "Binaire terraform introuvable.",
-            "Installer Terraform >= 1.6.",
+            "terraform binary not found.",
+            "Install Terraform >= 1.6.",
         )
         return
     try:
@@ -749,7 +758,7 @@ def check_terraform() -> None:
 
         version = json.loads(out)["terraform_version"]
     except Exception:  # noqa: BLE001
-        record(12, "Terraform", FAIL, "Version illisible.", "Vérifier l'installation.")
+        record(12, "Terraform", FAIL, "Version unreadable.", "Check the installation.")
         return
 
     major, minor = (int(x) for x in version.split(".")[:2])
@@ -758,9 +767,9 @@ def check_terraform() -> None:
 
     tfdir = ROOT / "infra" / "terraform"
     if not tfdir.exists():
-        details.append("infra/terraform/ absent — socle pas encore écrit")
+        details.append("infra/terraform/ absent — socle not yet written")
         record(12, "Terraform", PASS if ok else FAIL,
-               action="Terraform >= 1.6 requis.", details=details)
+               action="Terraform >= 1.6 is required.", details=details)
         return
 
     try:
@@ -768,56 +777,58 @@ def check_terraform() -> None:
             ["terraform", "init", "-backend=false"],
             cwd=tfdir, capture_output=True, check=True, timeout=180,
         )
-        details.append("terraform init : OK")
+        details.append("terraform init: OK")
     except Exception:  # noqa: BLE001
-        details.append("terraform init : ÉCHEC")
+        details.append("terraform init: FAILED")
         ok = False
 
     record(12, "Terraform", PASS if ok else FAIL,
-           action="Terraform >= 1.6 et un init valide sont requis.", details=details)
+           action="Terraform >= 1.6 and a valid init are required.", details=details)
 
 
 # ============================================================================ 13
 def check_python() -> None:
-    details = [f"interpréteur {sys.version_info.major}.{sys.version_info.minor}"]
+    details = [f"interpreter {sys.version_info.major}.{sys.version_info.minor}"]
 
     lock = ROOT / "uv.lock"
     if not lock.exists():
         record(13, "Python", FAIL, "uv.lock absent.",
-               "Lancer `make lock`. Sans lock, deux binômes peuvent installer deux "
-               "résolutions différentes.", details=details)
+               "Run `make lock`. Without a lock, two pairs can install two "
+               "different resolutions.", details=details)
         return
     if not shutil.which("uv"):
-        record(13, "Python", SKIP, "uv introuvable, environnement non testé.",
+        record(13, "Python", SKIP, "uv not found, environment untested.",
                details=details)
         return
 
-    # `--frozen` échoue si uv.lock ne correspond plus à pyproject.toml : on valide donc
-    # à la fois la cohérence du lock ET le fait que tout s'importe ensemble.
+    # `--frozen` fails if uv.lock no longer matches pyproject.toml: this
+    # validates both the lock's consistency AND that everything imports
+    # together.
     imports = "import boto3, strands, evidently, mlflow, sagemaker_mlflow, streamlit"
     try:
         subprocess.run(
             ["uv", "run", "--frozen", "python", "-c", imports],
             cwd=ROOT, capture_output=True, check=True, timeout=900,
         )
-        details.append("uv.lock cohérent avec pyproject.toml, imports OK")
+        details.append("uv.lock consistent with pyproject.toml, imports OK")
         record(13, "Python", PASS, details=details)
     except subprocess.CalledProcessError as exc:
         tail = (exc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]
         details.extend(tail)
-        record(13, "Python", FAIL, "Lock désynchronisé ou import en échec.",
-               "Lancer `make lock` puis relancer le preflight.", details=details)
+        record(13, "Python", FAIL, "Lock out of sync or import failed.",
+               "Run `make lock` then rerun preflight.", details=details)
     except subprocess.TimeoutExpired:
-        record(13, "Python", SKIP, "Installation trop longue (>15 min).", details=details)
+        record(13, "Python", SKIP, "Install taking too long (>15 min).", details=details)
 
 
 # ============================================================================ 14
 def check_mlflow() -> None:
-    """Contrôle rendu BLOQUANT par la décision D8.
+    """Check made BLOCKING by decision D8.
 
-    §12 prévoyait un SKIP si MLFLOW_TRACKING_URI était vide. Ce n'est plus tenable :
-    le lab fil rouge 6 du J3 trace ses rapports Evidently dans MLflow. Un preflight
-    vert sans MLflow signifierait une demi-journée de lab sans cible.
+    §12 planned a SKIP if MLFLOW_TRACKING_URI was empty. That's no longer
+    tenable: Day 3's fil-rouge lab 6 logs its Evidently reports to MLflow.
+    A green preflight with no MLflow would mean half a day of lab with no
+    target.
     """
     uri = config.mlflow_tracking_uri
     if not uri:
@@ -825,8 +836,8 @@ def check_mlflow() -> None:
             14,
             "MLflow",
             FAIL,
-            "MLFLOW_TRACKING_URI non renseigné.",
-            "Demander au formateur l'extrait `.env` mis à jour après création du tracking server.",
+            "MLFLOW_TRACKING_URI not set.",
+            "Ask your trainer for the `.env` snippet updated after the tracking server was created.",
             needs_socle=True,
         )
         return
@@ -841,16 +852,16 @@ def check_mlflow() -> None:
             "MLflow",
             PASS if ok else FAIL,
             f"tracking server {name}",
-            "Attendre la fin du provisioning, ou recréer le serveur.",
-            details=[f"statut : {status}", f"expérience du groupe : {config.mlflow_experiment}"],
+            "Wait for provisioning to finish, or recreate the server.",
+            details=[f"status: {status}", f"group's experiment: {config.mlflow_experiment}"],
         )
     except Exception as exc:  # noqa: BLE001
         record(
             14,
             "MLflow",
             FAIL,
-            f"Tracking server injoignable ({_code(exc)}).",
-            "Vérifier MLFLOW_TRACKING_URI et le droit sagemaker-mlflow sur le rôle.",
+            f"Tracking server unreachable ({_code(exc)}).",
+            "Check MLFLOW_TRACKING_URI and the sagemaker-mlflow right on the role.",
             needs_socle=True,
         )
 
@@ -859,16 +870,16 @@ def check_mlflow() -> None:
 def check_costs() -> None:
     record(
         15,
-        "Coûts et tags",
+        "Costs and tags",
         PASS,
-        "Rappel, pas un contrôle bloquant.",
+        "A reminder, not a blocking check.",
         details=[
-            f"endpoint {config.endpoint_instance} : facturé tant qu'il tourne — "
-            "l'éteindre chaque soir",
-            "service Fargate et passerelle NAT : facturés en continu",
-            "tracking server MLflow : facturé à l'heure",
-            "tags appliqués : " + ", ".join(f"{k}={v}" for k, v in config.tags.items()),
-            "`make destroy` s'appuie sur ces tags — sans eux, rien n'est nettoyé",
+            f"{config.endpoint_instance} endpoint: billed as long as it runs — "
+            "turn it off every evening",
+            "Fargate service and NAT gateway: billed continuously",
+            "MLflow tracking server: billed hourly",
+            "tags applied: " + ", ".join(f"{k}={v}" for k, v in config.tags.items()),
+            "`make destroy` relies on these tags — without them, nothing gets cleaned up",
         ],
     )
 
@@ -876,36 +887,36 @@ def check_costs() -> None:
 # ============================================================================
 def write_report() -> None:
     lines = [
-        "# Rapport de preflight",
+        "# Preflight report",
         "",
-        f"- Région : `{config.region}`",
-        f"- Groupe : `{config.team_id}`",
-        f"- Modèle Bedrock : `{config.bedrock_model_id or '(non renseigné)'}`",
+        f"- Region: `{config.region}`",
+        f"- Group: `{config.team_id}`",
+        f"- Bedrock model: `{config.bedrock_model_id or '(not set)'}`",
         "",
-        "Ce rapport est joignable tel quel à une demande d'accès.",
+        "This report can be attached as-is to an access request.",
         "",
-        "| # | Contrôle | État | Cause |",
+        "| # | Check | Status | Cause |",
         "| --- | --- | --- | --- |",
     ]
     for r in results:
-        lines.append(f"| {r.number} | {r.name} | **{r.status}** | {r.cause or '—'} |")
+        lines.append(f"| {r.number} | {r.name} | **{r.status}** | {r.cause or '\u2014'} |")
 
     failures = [r for r in results if r.status == FAIL]
     if failures:
-        lines += ["", "## Échecs et actions correctives", ""]
+        lines += ["", "## Failures and corrective actions", ""]
         for r in failures:
             lines.append(f"### {r.number}. {r.name}")
             lines.append("")
             if r.cause:
-                lines.append(f"- Cause : {r.cause}")
+                lines.append(f"- Cause: {r.cause}")
             for d in r.details:
                 lines.append(f"- {d}")
             if r.action:
-                lines.append(f"- **Action** : {r.action}")
+                lines.append(f"- **Action**: {r.action}")
             if r.needs_socle:
                 lines.append(
-                    "- Ce contrôle dépend du socle Terraform. Un échec est **normal** "
-                    "tant que `make socle-apply` n'a pas été exécuté."
+                    "- This check depends on the Terraform socle. A failure is **normal** "
+                    "until `make socle-apply` has been run."
                 )
             lines.append("")
 
@@ -915,23 +926,23 @@ def write_report() -> None:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    parseur = argparse.ArgumentParser(
-        description="15 contrôles avant toute création de ressource."
+    parser = argparse.ArgumentParser(
+        description="15 checks before creating any resource."
     )
-    parseur.add_argument(
+    parser.add_argument(
         "--formateur",
         action="store_true",
-        help="active la sonde d'écriture iam:CreateRole (nécessaire à `make"
-        " socle-apply`). Par défaut — mode apprenant — aucun appel d'écriture IAM"
-        " n'est émis.",
+        help="enables the iam:CreateRole write probe (needed for `make"
+        " socle-apply`). By default — learner mode — no IAM write call"
+        " is issued.",
     )
-    options = parseur.parse_args(argv)
+    options = parser.parse_args(argv)
 
     print()
     print("=" * 72)
-    mode = "formateur" if options.formateur else "apprenant"
+    mode = "trainer" if options.formateur else "learner"
     print(
-        f"  Preflight ({mode}) — {config.project} — groupe {config.team_id} — {config.region}"
+        f"  Preflight ({mode}) — {config.project} — group {config.team_id} — {config.region}"
     )
     print("=" * 72)
     print()
@@ -960,15 +971,15 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("=" * 72)
     counts = {s: sum(1 for r in results if r.status == s) for s in (PASS, FAIL, SKIP)}
-    print(f"  {counts[PASS]} PASS · {counts[FAIL]} FAIL · {counts[SKIP]} SKIP")
+    print(f"  {counts[PASS]} PASS \u00b7 {counts[FAIL]} FAIL \u00b7 {counts[SKIP]} SKIP")
     if failures:
         print()
-        print("  Échecs : " + ", ".join(f"{r.number}. {r.name}" for r in failures))
+        print("  Failures: " + ", ".join(f"{r.number}. {r.name}" for r in failures))
         if len(socle_only) == len(failures):
             print()
-            print("  Tous ces échecs dépendent du socle Terraform, pas encore appliqué.")
-            print("  C'est le comportement attendu à ce stade.")
-    print(f"  Rapport écrit dans {REPORT.name}")
+            print("  All these failures depend on the Terraform socle, not yet applied.")
+            print("  That's the expected behavior at this stage.")
+    print(f"  Report written to {REPORT.name}")
     print("=" * 72)
     print()
 
@@ -979,5 +990,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except ConfigError as exc:
-        print(f"\nConfiguration invalide.\n\n{exc}\n", file=sys.stderr)
+        print(f"\nInvalid configuration.\n\n{exc}\n", file=sys.stderr)
         sys.exit(1)

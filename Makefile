@@ -1,7 +1,7 @@
-# Cibles du projet. `make` sans argument affiche cette aide.
+# Project targets. `make` with no argument shows this help.
 #
-# Les scripts déclarent leurs dépendances en ligne (PEP 723) : uv les résout dans un
-# environnement jetable. Aucune installation globale, aucun besoin de l'AWS CLI.
+# Scripts declare their dependencies inline (PEP 723): uv resolves them in a
+# throwaway environment. No global install, no need for the AWS CLI.
 
 .DEFAULT_GOAL := help
 .PHONY: help discover probe preflight preflight-formateur bootstrap-apply socle-init \
@@ -12,97 +12,100 @@
 
 UV := uv run
 
-help: ## Affiche cette aide
+help: ## Show this help
 	@echo ""
-	@echo "  l'entreprise — AWS pour Data Scientists"
+	@echo "  the-company — AWS for Data Scientists"
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "  Les labs passent par la commande qc, pas par make :"
-	@echo "    uv run qc          où en est le binôme"
-	@echo "    uv run qc <étape>  exécute l'étape"
+	@echo "  The labs go through the qc command, not make:"
+	@echo "    uv run qc          where the pair currently stands"
+	@echo "    uv run qc <step>  runs that step"
 	@echo ""
-	@echo "  Ordre imposé : preflight vert AVANT toute création de ressource (§12)."
+	@echo "  Required order: preflight green BEFORE creating any resource (§12)."
 	@echo ""
 
-# --- Diagnostic ---------------------------------------------------------------
+# --- Diagnostics ---------------------------------------------------------------
 
-discover: ## Sonde le compte AWS (ne crée rien) — modèles, quotas, services
+discover: ## Probe the AWS account (creates nothing) — models, quotas, services
 	@$(UV) scripts/discover.py
 
-probe: ## Vérifie l'accès modèle Bedrock et son pilotage par Strands
+probe: ## Verify Bedrock model access and Strands-driven piloting
 	@$(UV) scripts/probe_model.py
 
-preflight: ## 15 contrôles obligatoires avant toute création de ressource (mode apprenant : aucune écriture IAM)
+preflight: ## 15 mandatory checks before creating any resource (learner mode: no IAM writes)
 	@$(UV) scripts/preflight.py
 
-preflight-formateur: ## [formateur] Preflight avec la sonde iam:CreateRole, requise avant socle-apply
+preflight-formateur: ## [trainer] Preflight with the iam:CreateRole probe, required before socle-apply
 	@$(UV) scripts/preflight.py --formateur
 
-# --- Socle, côté formateur ----------------------------------------------------
+# --- Socle, trainer side ----------------------------------------------------
 
 TF_BOOTSTRAP := infra/terraform/bootstrap
 TF_SOCLE     := infra/terraform/socle
 
-bootstrap-apply: ## [formateur] Étape 1 — crée le bucket d'état Terraform (une seule fois)
-	@# L'état de ce module est LOCAL et ignoré par git : sur un clone frais, Terraform
-	@# croit que le bucket n'existe pas et l'apply échoue sur un bucket déjà pris. Le
-	@# bootstrap n'est à jouer qu'une fois dans la vie de la formation ; ensuite c'est
-	@# `make backend-hcl` qui régénère le fichier, sans état ni apply.
+bootstrap-apply: ## [trainer] Step 1 — creates the Terraform state bucket (once only)
+	@# This module's state is LOCAL and gitignored: on a fresh clone, Terraform
+	@# thinks the bucket doesn't exist and the apply fails on a bucket that's
+	@# already taken. Bootstrap should only run once in the training's lifetime;
+	@# after that it's `make backend-hcl` that regenerates the file, with no
+	@# state and no apply.
 	@if $(UV) scripts/backend_hcl.py 2>/dev/null; then \
-	  echo "Bucket d'état déjà en place — bootstrap déjà appliqué, rien à créer."; \
-	  echo "Enchaîner avec : make socle-init"; \
+	  echo "State bucket already in place — bootstrap already applied, nothing to create."; \
+	  echo "Follow up with: make socle-init"; \
 	else \
 	  cd $(TF_BOOTSTRAP) && terraform init && terraform apply \
 	    && terraform output -raw backend_config > ../socle/backend.hcl \
-	    && echo "backend.hcl généré. Enchaîner avec : make socle-init"; \
+	    && echo "backend.hcl generated. Follow up with: make socle-init"; \
 	fi
 
-backend-hcl: ## [formateur] Régénère socle/backend.hcl depuis le compte courant (clone frais)
+backend-hcl: ## [trainer] Regenerate socle/backend.hcl from the current account (fresh clone)
 	@$(UV) scripts/backend_hcl.py
 
-socle-init: ## [formateur] Étape 2 — initialise le socle sur son backend distant
+socle-init: ## [trainer] Step 2 — initializes the socle on its remote backend
 	@test -f $(TF_SOCLE)/backend.hcl || $(MAKE) --no-print-directory backend-hcl
 	@cd $(TF_SOCLE) && terraform init -backend-config=backend.hcl
 
-socle-plan: ## [formateur] Montre ce qui serait créé, sans rien créer
+socle-plan: ## [trainer] Shows what would be created, without creating anything
 	@cd $(TF_SOCLE) && terraform plan
 
-socle-apply: ## [formateur] Étape 3 — applique le socle
-	@# Garde-fou AMI : allumer les huit machines sans AMI dorée, c'est huit bootstraps
-	@# complets en parallèle sur la NAT — un quart d'heure perdu, la veille au soir.
+socle-apply: ## [trainer] Step 3 — applies the socle
+	@# AMI safeguard: turning on eight machines with no golden AMI means eight
+	@# full bootstraps in parallel over a single NAT gateway — a wasted quarter
+	@# hour, the evening before.
 	@if grep -qE '^create_workstations *= *true' $(TF_SOCLE)/terraform.tfvars 2>/dev/null \
-	  && grep -qE '^workstation_ami_id *= *""' $(TF_SOCLE)/terraform.tfvars 2>/dev/null; then \
+	  && grep -qE '^workstation_ami_id *= *"" ' $(TF_SOCLE)/terraform.tfvars 2>/dev/null; then \
 	  echo ""; \
-	  echo "  ATTENTION : create_workstations = true mais workstation_ami_id est vide."; \
-	  echo "  Les machines démarreront en bootstrap lent (~10 min chacune)."; \
-	  echo "  Construire l'AMI d'abord : make ami-build  (elle remplit tfvars toute seule)"; \
+	  echo "  WARNING: create_workstations = true but workstation_ami_id is empty."; \
+	  echo "  The machines will start with a slow bootstrap (~10 min each)."; \
+	  echo "  Build the AMI first: make ami-build  (it fills in tfvars by itself)"; \
 	  echo ""; \
 	fi
 	@cd $(TF_SOCLE) && terraform apply
 
 
-socle-destroy: ## [formateur] Détruit le socle en fin de formation
+socle-destroy: ## [trainer] Destroys the socle at the end of the training
 	@cd $(TF_SOCLE) && terraform destroy
-	@echo "Le bucket d'état survit volontairement (prevent_destroy)."
-	@echo "Le supprimer à la main une fois la formation clôturée."
+	@echo "The state bucket deliberately survives (prevent_destroy)."
+	@echo "Delete it by hand once the training is fully wrapped up."
 
-# --- Module team, côté apprenant ----------------------------------------------
+# --- Team module, learner side ----------------------------------------------
 
 TF_TEAM := infra/terraform/team
 
-# Le bucket d'état vient du `.env` apprenant. Sur le dépôt solution, le repli sur
-# backend.hcl reste pratique pour le formateur ; ce fichier est volontairement absent du
-# starter, car il dépend du compte AWS de formation.
+# The state bucket comes from the learner's `.env`. On the solution repo, the
+# fallback to backend.hcl stays convenient for the trainer; this file is
+# deliberately absent from the starter, since it depends on the training AWS
+# account.
 TF_STATE_BUCKET ?= $(shell sed -n 's/^bucket *= *"\(.*\)"/\1/p' $(TF_SOCLE)/backend.hcl 2>/dev/null)
 
 TEAM_TF_VARS = -var="team_id=$(TEAM_ID)" -var="owner_email=$(OWNER_EMAIL)" -var="state_bucket=$(TF_STATE_BUCKET)"
 
-team-init: ## Initialise le module du binôme — usage : make team-init TEAM_ID=g01
-	@test -n "$(TEAM_ID)" || (echo "Usage : make team-init TEAM_ID=g01"; exit 1)
+team-init: ## Initializes the pair's module — usage: make team-init TEAM_ID=g01
+	@test -n "$(TEAM_ID)" || (echo "Usage: make team-init TEAM_ID=g01"; exit 1)
 	@test -n "$(TF_STATE_BUCKET)" \
-	  || (echo "Bucket d'état introuvable — renseigner TF_STATE_BUCKET dans .env, ou (formateur) : make backend-hcl"; exit 1)
+	  || (echo "State bucket not found — set TF_STATE_BUCKET in .env, or (trainer): make backend-hcl"; exit 1)
 	@cd $(TF_TEAM) && terraform init \
 	  -backend-config="bucket=$(TF_STATE_BUCKET)" \
 	  -backend-config="key=team/$(TEAM_ID)/terraform.tfstate" \
@@ -110,61 +113,61 @@ team-init: ## Initialise le module du binôme — usage : make team-init TEAM_ID
 	  -backend-config="encrypt=true" \
 	  -backend-config="use_lockfile=true"
 
-team-plan: ## Montre ce que le binôme créerait — make team-plan TEAM_ID=g01
-	@test -n "$(TEAM_ID)" || (echo "Usage : make team-plan TEAM_ID=g01"; exit 1)
-	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL absent — renseigner .env puis : set -a; . ./.env; set +a"; exit 1)
-	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET absent — demander l'extrait .env du groupe au formateur puis recharger .env"; exit 1)
+team-plan: ## Shows what the pair would create — make team-plan TEAM_ID=g01
+	@test -n "$(TEAM_ID)" || (echo "Usage: make team-plan TEAM_ID=g01"; exit 1)
+	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL missing — set it in .env then: set -a; . ./.env; set +a"; exit 1)
+	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET missing — ask your trainer for your group's .env snippet then reload .env"; exit 1)
 	@cd $(TF_TEAM) && terraform plan $(TEAM_TF_VARS)
 
-team-apply: ## Déploie l'application du binôme — make team-apply TEAM_ID=g01
-	@test -n "$(TEAM_ID)" || (echo "Usage : make team-apply TEAM_ID=g01"; exit 1)
-	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL absent — renseigner .env puis : set -a; . ./.env; set +a"; exit 1)
-	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET absent — demander l'extrait .env du groupe au formateur puis recharger .env"; exit 1)
+team-apply: ## Deploys the pair's application — make team-apply TEAM_ID=g01
+	@test -n "$(TEAM_ID)" || (echo "Usage: make team-apply TEAM_ID=g01"; exit 1)
+	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL missing — set it in .env then: set -a; . ./.env; set +a"; exit 1)
+	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET missing — ask your trainer for your group's .env snippet then reload .env"; exit 1)
 	@cd $(TF_TEAM) && terraform apply $(TEAM_TF_VARS)
 
-team-destroy: ## Supprime les ressources du binôme, jamais le socle
-	@test -n "$(TEAM_ID)" || (echo "Usage : make team-destroy TEAM_ID=g01"; exit 1)
-	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL absent — renseigner .env puis : set -a; . ./.env; set +a"; exit 1)
-	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET absent — demander l'extrait .env du groupe au formateur puis recharger .env"; exit 1)
+team-destroy: ## Removes the pair's resources, never the socle
+	@test -n "$(TEAM_ID)" || (echo "Usage: make team-destroy TEAM_ID=g01"; exit 1)
+	@test -n "$(OWNER_EMAIL)" || (echo "OWNER_EMAIL missing — set it in .env then: set -a; . ./.env; set +a"; exit 1)
+	@test -n "$(TF_STATE_BUCKET)" || (echo "TF_STATE_BUCKET missing — ask your trainer for your group's .env snippet then reload .env"; exit 1)
 	@cd $(TF_TEAM) && terraform destroy $(TEAM_TF_VARS)
 
 
 
 
+# --- Verification, learner side ---------------------------------------------
 
-# --- Vérification, côté apprenant ---------------------------------------------
-
-check-day1: ## Vérifie l'état AWS attendu en fin de J1
+check-day1: ## Verifies the expected AWS state at the end of Day 1
 	@$(UV) scripts/check_day1.py
 
-check-day2: ## Vérifie l'état AWS attendu en fin de J2
+check-day2: ## Verifies the expected AWS state at the end of Day 2
 	@$(UV) scripts/check_day2.py
 
-check-day3: ## Vérifie l'état AWS attendu en fin de J3
+check-day3: ## Verifies the expected AWS state at the end of Day 3
 	@$(UV) scripts/check_day3.py
 
 
 
-# --- Reprise ------------------------------------------------------------------
+# --- Catch-up ------------------------------------------------------------------
 
-restore-day1: ## Rejoue ce qui manque du J1 : S3, entraînement, endpoint (~15 min)
+restore-day1: ## Replays what's missing from Day 1: S3, training, endpoint (~15 min)
 	@$(UV) scripts/restore_day1.py $(ARGS)
 
-restore-day2: ## Rejoue ce qui manque du J2 : J1, image, push ECR (~10 min)
+restore-day2: ## Replays what's missing from Day 2: Day1, image, push to ECR (~10 min)
 	@$(UV) scripts/restore_day2.py $(ARGS)
 
-# --- Divers -------------------------------------------------------------------
+# --- Misc -------------------------------------------------------------------
 
-sync: ## Installe l'environnement depuis uv.lock
+sync: ## Installs the environment from uv.lock
 	@uv sync --frozen
 
-test: ## Lance la suite de tests
+test: ## Runs the test suite
 	@$(UV) --frozen pytest tests/
 
-ci: ## Tout ce que la CI vérifie : fmt, validate (bootstrap/socle/team), lint IAM, tests
+ci: ## Everything CI checks: fmt, validate (bootstrap/socle/team), IAM lint, tests
 	@terraform fmt -check -recursive infra/terraform
-	@# TF_DATA_DIR jetable : un `terraform init` local a pu configurer le backend S3
-	@# dans .terraform/, et sa relecture exigerait des credentials — hors sujet ici.
+	@# Throwaway TF_DATA_DIR: a local `terraform init` may have configured the S3
+	@# backend under .terraform/, and reading it back would require credentials —
+	@# irrelevant here.
 	@for module in bootstrap socle team; do \
 		donnees=$$(mktemp -d); \
 		echo "terraform validate — $$module"; \
@@ -176,21 +179,20 @@ ci: ## Tout ce que la CI vérifie : fmt, validate (bootstrap/socle/team), lint I
 	@$(UV) scripts/lint_iam.py
 	@$(UV) --frozen pytest tests/
 
-lock: ## Fige les dépendances (uv.lock) et régénère requirements.txt
+lock: ## Freezes the dependencies (uv.lock) and regenerates requirements.txt
 	@uv lock
-	@# requirements.txt est un ARTEFACT GÉNÉRÉ, conservé pour la traçabilité demandée
-	@# par §13. La source de vérité est pyproject.toml.
+	@# requirements.txt is a GENERATED ARTIFACT, kept for the traceability
+	@# required by §13. The source of truth is pyproject.toml.
 	@uv export --no-hashes --no-dev --format requirements-txt -o requirements.txt -q
-	@echo "Vérification des imports…"
+	@echo "Checking imports..."
 	@$(UV) --frozen python -c \
 	  "import boto3, strands, evidently, mlflow, sagemaker_mlflow, streamlit"
-	@echo "OK — $$(grep -c '^[a-zA-Z0-9]' requirements.txt) paquets figés."
+	@echo "OK — $$(grep -c '^[a-zA-Z0-9]' requirements.txt) packages frozen."
 
-destroy: ## Supprime ce que les labs facturent — endpoint puis service ECS
-	@test -n "$(TEAM_ID)" || (echo "Usage : make destroy TEAM_ID=g01"; exit 1)
+destroy: ## Removes what the labs bill for — endpoint then ECS service
+	@test -n "$(TEAM_ID)" || (echo "Usage: make destroy TEAM_ID=g01"; exit 1)
 	@$(UV) qc teardown
 	@cd $(TF_TEAM) && terraform destroy -var="team_id=$(TEAM_ID)"
 	@echo ""
-	@echo "L'image ECR et l'artefact S3 restent : ils ne coûtent presque rien et"
-	@echo "permettent de redéployer sans reconstruire. make socle-destroy les emporte."
-
+	@echo "The ECR image and S3 artifact remain: they cost almost nothing and let"
+	@echo "you redeploy without rebuilding. make socle-destroy takes them down too."

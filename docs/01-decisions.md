@@ -1,665 +1,726 @@
-# l'entreprise AWS for DS — décisions d'arbitrage (session du 2026-07-27)
+# the-company AWS for DS — arbitration decisions (session of 2026-07-27)
 
-Complément à `docs/00-programme.md`. En cas de contradiction, **ce fichier prime**
-(il est postérieur et tranche les zones grises de la §18).
+> Translator's note: "the-company" is a placeholder for the real client name used
+> throughout the original French repository; it was not expanded here so as not to
+> guess at a name that isn't in the source text.
 
-C'est un **journal** : les entrées sont datées, jamais réécrites, et rangées dans l'ordre
-où elles ont été prises. L'index ci-dessous sert à naviguer.
+Complement to `docs/00-programme.md`. In case of contradiction, **this file takes
+precedence** (it is later and settles the gray areas of §18).
+
+This is a **log**: entries are dated, never rewritten, and ordered in the order they
+were made. The index below is for navigation.
 
 ## Index
 
-| # | En une ligne | Statut |
+| # | One-liner | Status |
 | --- | --- | --- |
-| D1 | Binômes, `teams` en variable Terraform, TEAM_ID `^g[0-9]{2}$` | actif |
-| D2 / D2 bis | Machines de travail EC2, distribution Ubuntu (pas Amazon Linux) | actif |
-| D3 | Rattrapage code par les tags du starter (`j1-fin`, `j2-fin`) | actif |
-| D4 | Rattrapage AWS | partiellement obsolète → D23 |
-| D5 | Région unique eu-west-3, jamais en dur | actif |
-| D6 | La présence au catalogue Bedrock ne vaut pas accès : sonde Converse | actif |
-| D7 | Nommage déterministe `qc-<TEAM_ID>-…`, suffixe de compte pour S3 | actif |
-| D8 | MLflow managé SageMaker + `sagemaker-mlflow` obligatoire | actif |
-| D9 | Durcissement réseau (VPC, endpoints, ALB interne) | actif |
-| D10 | Vérification et pilotage : `check-dayN`, `restore-dayN`, dashboard | actif |
-| D11 | Jeu SECOM figé et déterministe (`features.json`) | actif |
-| D12 | ALB par chemin `/gNN/` → Streamlit `--server.baseUrlPath` | actif |
-| D13 | Réorganisation du J3 (lab 6 délesté) | actif |
-| D14 | Modèle Bedrock : `mistral.mistral-large-2402-v1:0` seul accessible | actif |
-| D15 | Strands en `streaming=False`, sinon le tool use casse | actif |
-| D16 | Écarts assumés du preflight par rapport à §12 | actif |
-| D17 | `qc/config.py` seul lecteur de `.env` | actif |
-| D18 | Versions figées ; Evidently 0.7 (presets déplacés) | actif |
-| D19 | Une application unique, pas de dossiers day1/2/3 | actif |
-| D20 | Horodatages SECOM : 604 lignes récupérées | actif |
-| D21 | Isolation entre groupes par profil d'instance (deny hors préfixe) | actif |
-| D22 | Un cluster ECS par groupe, créé dans le socle | actif |
-| D23 | Corrections de la revue croisée du 28/07 | actif |
-| D24 | La suite de tests ne joint jamais AWS | actif |
-| D25 | La régression logistique remplace XGBoost (mode script SKLearn) | actif |
-| D26 | La capture se filtre par `inferenceTime`, pas par date de fichier | actif |
-| D27 | ECS Exec = canal SSM du formateur, exige `ssmmessages` | actif |
+| D1 | Pairs, `teams` as a Terraform variable, TEAM_ID `^g[0-9]{2}$` | active |
+| D2 / D2 bis | EC2 work machines, Ubuntu distribution (not Amazon Linux) | active |
+| D3 | Code catch-up via starter tags (`j1-fin`, `j2-fin`) | active |
+| D4 | AWS catch-up | partially obsolete -> D23 |
+| D5 | Single region eu-west-3, never hardcoded | active |
+| D6 | Presence in the Bedrock catalog doesn't mean access: probe with Converse | active |
+| D7 | Deterministic naming `qc-<TEAM_ID>-...`, account suffix for S3 | active |
+| D8 | SageMaker managed MLflow + `sagemaker-mlflow` mandatory | active |
+| D9 | Network hardening (VPC, endpoints, internal ALB) | active |
+| D10 | Verification and monitoring: `check-dayN`, `restore-dayN`, dashboard | active |
+| D11 | Fixed, deterministic SECOM dataset (`features.json`) | active |
+| D12 | Path-based ALB `/gNN/` -> Streamlit `--server.baseUrlPath` | active |
+| D13 | Day3 reorganization (lab 6 relieved) | active |
+| D14 | Bedrock model: only `mistral.mistral-large-2402-v1:0` accessible | active |
+| D15 | Strands in `streaming=False`, otherwise tool use breaks | active |
+| D16 | Assumed deviations of preflight from §12 | active |
+| D17 | `qc/config.py` sole reader of `.env` | active |
+| D18 | Frozen versions; Evidently 0.7 (presets moved) | active |
+| D19 | One single application, no day1/2/3 folders | active |
+| D20 | SECOM timestamps: 604 lines recovered | active |
+| D21 | Isolation between groups by instance profile (deny outside prefix) | active |
+| D22 | One ECS cluster per group, created in the socle | active |
+| D23 | Corrections from the 07/28 cross-review | active |
+| D24 | The test suite never reaches AWS | active |
+| D25 | Logistic regression replaces XGBoost (SKLearn script mode) | active |
+| D26 | Capture is filtered by `inferenceTime`, not file date | active |
+| D27 | ECS Exec = the trainer's SSM channel, requires `ssmmessages` | active |
 
-## D1 — Groupes et TEAM_ID
-- Travail en **binômes** (annule et remplace la recommandation trinômes de §4).
-- Le nombre de groupes n'est **pas figé** : variable Terraform `teams` (liste de TEAM_ID).
-  Le socle génère workstations, règles ALB, rôles IAM et groupes de logs par `for_each`.
-- Le preflight calcule le besoin de quota SageMaker comme `len(teams) × marge`,
-  jamais un chiffre en dur.
-- Format TEAM_ID imposé et validé par regex : `^g[0-9]{2}$` (g01, g02, …).
-- **Supprimer** l'exemple `qc-b03-endpoint` de §11 : il contredit le format `g01`.
+## D1 — Groups and TEAM_ID
 
-## D2 — Machines de travail
-- EC2 **définies dans `infra/terraform/socle/`**, appliquées par le formateur avant la
-  formation. Les apprenants n'ont la main que sur `infra/terraform/team/` : ils ne
-  peuvent donc pas détruire leur propre machine avec le `terraform destroy` du J3.
-- **Golden AMI** : une workstation de référence est construite et validée, puis figée en
-  AMI. Les machines de la promo démarrent depuis cette AMI (Docker + buildx, Python 3.11,
-  AWS CLI, git, cache uv chauffé) → pas de `dnf install` devant 15 personnes au J1.
-- **Révisé le 28/07/2026 — l'AMI n'embarque PLUS le dépôt starter.** Un clone figé dans
-  une image est périmé au premier commit, et le starter est force-pushé à chaque
-  régénération : le `git pull` échoue alors sur un historique réécrit. Les binômes
-  clonent eux-mêmes au J1 (~1 Mo, instantané) ; seul le CACHE uv (paquets + interpréteur)
-  est chauffé dans l'image, via un clone jetable supprimé avant la création de l'AMI.
-  S'il reste vrai qu'aucun dépôt de correction ne doit approcher les machines (D2), la
-  remarque sur `git checkout j1-fin` demeure : les tags de correction arrivent avec le
-  clone que fait le binôme.
-- Cible `make workstation-check` : se connecte par SSM à chaque machine et vérifie
-  docker, buildx, python, le clone du repo et `sts get-caller-identity`. À exécuter la veille.
-- Accès par Session Manager, profil d'instance `qc-<TEAM_ID>-workstation-profile`,
-  aucune clé statique distribuée.
+- Work in **pairs** (cancels and replaces the trio recommendation from §4).
+- The number of groups is **not fixed**: Terraform variable `teams` (list of
+  TEAM_ID). The socle generates workstations, ALB rules, IAM roles and log groups
+  via `for_each`.
+- The preflight computes the SageMaker quota need as `len(teams) x margin`, never a
+  hardcoded number.
+- Enforced TEAM_ID format, validated by regex: `^g[0-9]{2}$` (g01, g02, ...).
+- **Remove** the `qc-b03-endpoint` example from §11: it contradicts the `g01`
+  format.
 
-## D2 bis — Distribution des workstations : Ubuntu, pas Amazon Linux
-§14 prévoyait Amazon Linux 2023. Décision du formateur : **Ubuntu**. Le contenu du dépôt
-(scripts Python, Makefile, Terraform) est totalement agnostique — seul le bootstrap de
-l'AMI change. Points à traiter, aucun n'est bloquant :
+## D2 — Work machines
 
-| Élément | Amazon Linux 2023 | Ubuntu |
+- EC2 **defined in `infra/terraform/socle/`**, applied by the trainer before the
+  training. Learners only have control over `infra/terraform/team/`: they therefore
+  can't destroy their own machine with Day 3's `terraform destroy`.
+- **Golden AMI**: a reference workstation is built and validated, then frozen as an
+  AMI. The cohort's machines start from this AMI (Docker + buildx, Python 3.11, AWS
+  CLI, git, warm uv cache) -> no `dnf install` in front of 15 people on Day 1.
+- **Revised on 07/28/2026 — the AMI no longer embeds the starter repo.** A repo
+  clone frozen in an image goes stale on the very first commit, and the starter is
+  force-pushed at every regeneration: `git pull` then fails on a rewritten history.
+  Pairs clone it themselves on Day 1 (~1 MB, instant); only the uv CACHE (packages +
+  interpreter) is warmed in the image, via a throwaway clone deleted before the AMI
+  is created. While it remains true that no solution repo should ever get near the
+  machines (D2), the note about `git checkout j1-fin` still stands: the correction
+  tags arrive with the clone the pair makes.
+- `make workstation-check` target: connects via SSM to each machine and checks
+  docker, buildx, python, the repo clone, and `sts get-caller-identity`. To run the
+  day before.
+- Access via Session Manager, instance profile `qc-<TEAM_ID>-workstation-profile`,
+  no static key distributed.
+
+## D2 bis — Workstation distribution: Ubuntu, not Amazon Linux
+
+§14 planned for Amazon Linux 2023. Trainer's decision: **Ubuntu**. The repo's
+content (Python scripts, Makefile, Terraform) is entirely agnostic — only the AMI
+bootstrap changes. Points to handle, none blocking:
+
+| Item | Amazon Linux 2023 | Ubuntu |
 | --- | --- | --- |
-| Utilisateur par défaut | `ec2-user` | `ubuntu` — impacte les chemins du bootstrap et le groupe `docker` |
-| Python | 3.9 système | 3.12 système |
-| Docker + buildx | `dnf install docker`, buildx à part | dépôt apt Docker officiel : `docker-ce` + `docker-buildx-plugin` |
-| Terraform | dépôt HashiCorp yum | dépôt apt HashiCorp |
-| Agent SSM | préinstallé | **à vérifier** sur l'AMI Canonical retenue |
+| Default user | `ec2-user` | `ubuntu` — affects the bootstrap paths and the `docker` group |
+| Python | system 3.9 | system 3.12 |
+| Docker + buildx | `dnf install docker`, buildx separate | official Docker apt repo: `docker-ce` + `docker-buildx-plugin` |
+| Terraform | HashiCorp yum repo | HashiCorp apt repo |
+| SSM agent | preinstalled | **to verify** on the chosen Canonical AMI |
 
-- **Le Python système n'a aucune importance** : `uv` télécharge et gère l'interpréteur
-  3.11 exigé par §11. C'est ce qui rend l'écart Arch (formateur) / Ubuntu (workstations)
-  sans conséquence, et c'est la principale raison de tout passer par `uv`.
-- **Piège Docker sur Ubuntu** : le paquet `docker.io` des dépôts Ubuntu ne fournit pas
-  `buildx`. Or §11 impose `docker buildx` et la plateforme `linux/amd64`, et le contrôle
-  11 du preflight le vérifie. Le bootstrap doit utiliser le dépôt apt officiel de Docker
-  et installer `docker-buildx-plugin`, pas `docker.io`.
-- **Agent SSM** : à confirmer sur l'AMI Ubuntu retenue. C'est le seul accès aux machines
-  (D2), donc son absence bloquerait tout le monde au matin du J1. Le `make
-  workstation-check` doit le vérifier explicitement la veille.
-- **Fichier `.python-version`** ajouté à la racine du dépôt (valeur `3.11`), et
-  `make lock` compile désormais avec `--python-version 3.11`. Sans cela, le lock dépendrait
-  du Python de la machine qui l'a compilé — Arch en 3.13 chez le formateur, Ubuntu en 3.12
-  sur les workstations — et ne serait plus reproductible.
+- **The system Python doesn't matter at all**: `uv` downloads and manages the
+  required 3.11 interpreter (§11). That's what makes the Arch (trainer) / Ubuntu
+  (workstations) gap inconsequential, and the main reason everything goes through
+  `uv`.
+- **Docker trap on Ubuntu**: the Ubuntu repos' `docker.io` package doesn't provide
+  `buildx`. Yet §11 requires `docker buildx` and the `linux/amd64` platform, and
+  preflight check 11 verifies it. The bootstrap must use Docker's official apt repo
+  and install `docker-buildx-plugin`, not `docker.io`.
+- **SSM agent**: to confirm on the chosen Ubuntu AMI. It's the only access to the
+  machines (D2), so its absence would block everyone on Day 1 morning.
+  `make workstation-check` must explicitly verify it the day before.
+- **`.python-version` file** added at the repo root (value `3.11`), and `make lock`
+  now compiles with `--python-version 3.11`. Without this, the lock would depend on
+  the Python of whichever machine compiled it — Arch on 3.13 for the trainer, Ubuntu
+  on 3.12 on the workstations — and would no longer be reproducible.
 
-## D3 — Reprise en J2 / J3, couche CODE
-- Les tags `j1-fin`, `j2-fin` sont **présents dès le départ sur `main`** du repo
-  starter (choix assumé : la solution est accessible dès la première minute).
-- Atténuation : les checks portent sur l'**état AWS réel** (endpoint `InService` sous le
-  préfixe du groupe, objets présents dans le bucket, data capture qui écrit), pas sur le
-  contenu des fichiers. Copier le code sans l'exécuter ne fait pas passer le check.
-- Conséquence : le critère « aucune solution résiduelle dans l'historique git » de §13
-  (instance C) est **annulé**.
+## D3 — Resuming on Day 2 / Day 3, CODE layer
 
-## D4 — [PARTIELLEMENT OBSOLÈTE, voir D23]  Reprise en J2 / J3, couche AWS
-- `make restore-day1` rejoue **l'intégralité** du J1 : upload S3 → training job → déploiement
-  d'endpoint. ~15 min de mur. Idem `make restore-day2`.
-- Lancé en **arrière-plan** avec suivi, pendant la masterclass 1 du J2, pour ne pas manger
-  la matinée.
-- Conséquence quota : N binômes lançant le restore à 9h = N training jobs simultanés.
-  Le contrôle n°5 du preflight (quota d'instances d'entraînement ≥ nombre de groupes)
-  devient bloquant à ce moment précis, pas seulement en théorie.
+- The `j1-fin`, `j2-fin` tags are **present from the start on `main`** of the
+  starter repo (deliberate choice: the solution is accessible from the very first
+  minute).
+- Mitigation: the checks target the **real AWS state** (endpoint `InService` under
+  the group's prefix, objects present in the bucket, data capture that's writing),
+  not the content of the files (see D3). Copying the code without running it
+  doesn't pass the check.
+- Consequence: §13's criterion of "no residual solution in the git history"
+  (instance C) is **cancelled**.
 
-## D5 — Région
-- **eu-west-3 (Paris)**, résidence France.
-- À vérifier dans la console avant tout engagement :
-  - liste des modèles Bedrock activables depuis eu-west-3 (délai de demande d'accès) ;
-  - quotas des types d'instances SageMaker retenus × nombre de groupes.
-- Dimensionnement retenu (régression logistique — et déjà valable pour l'ancien
-  XGBoost —, ~40 features, 1567 lignes → CPU suffit) :
-  `SAGEMAKER_TRAIN_INSTANCE=ml.m5.large`, `SAGEMAKER_ENDPOINT_INSTANCE=ml.m5.large`.
-  Pas de GPU.
+## D4 — [PARTIALLY OBSOLETE, see D23] Resuming on Day 2 / Day 3, AWS layer
 
-## D6 — Correction du preflight Bedrock (§12, contrôle n°7)
-- La spec actuelle est **fausse en Europe** : elle exige que `BEDROCK_MODEL_ID` figure dans
-  `list_foundation_models`. En région UE, les modèles Claude récents s'invoquent via un
-  **profil d'inférence cross-région** préfixé `eu.`, qui apparaît dans
-  `list_inference_profiles`, pas dans `list_foundation_models`.
-- Correction : le contrôle accepte les deux formes, interroge `list_inference_profiles`
-  quand l'ID commence par `eu.`, et conserve l'**appel `Converse` réel** comme critère
-  décisif (seul contrôle qui prouve l'accès effectif).
+- `make restore-day1` replays **the entirety** of Day 1: S3 upload -> training job ->
+  endpoint deployment. ~15 minutes wall-clock. Same for `make restore-day2`.
+- Launched in the **background** with tracking, during the Day 2 masterclass 1, so
+  it doesn't eat the morning.
+- Quota consequence: N pairs launching the restore at 9am = N training jobs
+  simultaneously. Preflight check n°5 (training instance quota >= number of groups)
+  becomes blocking at that precise moment, not just in theory.
 
-## D7 — Nommage déterministe vs noms dérivés
-- Les tests **ne codent jamais un nom en dur**. Ils importent `src/qc/config.py`, qui est
-  l'unique source de vérité des noms de ressources.
-- Raison : deux noms ne sont pas connaissables à l'écriture des tests —
-  le bucket (`qc-<TEAM_ID>-data-<suffixe compte>`, unicité mondiale) et les jobs
-  d'entraînement / configurations d'endpoint (horodatage UTC, unicité dans le temps).
+## D5 — Region
+
+- **eu-west-3 (Paris)**, France data residency.
+- To verify in the console before any commitment:
+  - list of Bedrock models activatable from eu-west-3 (access-request lead time);
+  - quotas for the chosen SageMaker instance types x number of groups.
+- Sizing chosen (logistic regression — and already valid for the former XGBoost —,
+  ~40 features, 1567 rows -> CPU is enough): `SAGEMAKER_TRAIN_INSTANCE=ml.m5.large`,
+  `SAGEMAKER_ENDPOINT_INSTANCE=ml.m5.large`. No GPU.
+
+## D6 — Bedrock preflight fix (§12, check n°7)
+
+- The current spec is **wrong for Europe**: it requires `BEDROCK_MODEL_ID` to appear
+  in `list_foundation_models`. In the EU region, recent Claude models are invoked
+  via a cross-region **inference profile** prefixed `eu.`, which appears in
+  `list_inference_profiles`, not `list_foundation_models`.
+- Fix: the check accepts both forms, queries `list_inference_profiles` when the ID
+  starts with `eu.`, and keeps the **real `Converse` call** as the deciding
+  criterion (the only check that proves actual access).
+
+## D7 — Deterministic naming vs. derived names
+
+- Tests **never hardcode a name**. They import `src/qc/config.py`, which is the
+  single source of truth for resource names.
+- Reason: two names aren't knowable when the tests are written — the bucket
+  (`qc-<TEAM_ID>-data-<account suffix>`, world-wide uniqueness) and the training
+  jobs / endpoint configs (UTC timestamp, uniqueness over time).
 
 ## D8 — MLflow
-- **SageMaker managed MLflow** : un tracking server géré, unique pour la promo, créé
-  dans le socle bien avant la formation (~20 min de provisioning, facturé à l'heure).
-- Une expérience par groupe, nommée `qc-<TEAM_ID>`. Droits `sagemaker-mlflow:*` ajoutés
-  au rôle `qc-<TEAM_ID>-lab`. `MLFLOW_TRACKING_URI` = ARN du tracking server.
-- **Ajout obligatoire à `requirements.txt` (absent de la stack §11)** : le paquet
-  `sagemaker-mlflow`. Sans ce plugin, le client MLflow ne parle pas au serveur géré et
-  le lab fil rouge 6 du J3 échoue immédiatement.
-- Le contrôle n°14 du preflight devient **bloquant** : le SKIP prévu en §12 est annulé,
-  puisque le J3 en dépend.
-- À confirmer en console : disponibilité du MLflow géré en eu-west-3.
-**Vérifié le 28/07/2026 — risque levé.** `list_mlflow_tracking_servers` répond en
-eu-west-3 : le MLflow managé y est disponible. D8 n'a pas à être rouvert, et le repli sur
-un MLflow local sur la workstation n'est plus nécessaire. Écrit en tranche 3
-(`infra/terraform/socle/mlflow.tf`), derrière `create_mlflow = false` — le serveur est
-facturé à l'heure dès sa création.
 
-- **Risque non couvert, contrairement à D14.** Le choix du modèle Bedrock a une échelle de
-  repli et se change en une variable ; MLflow géré n'en a pas. S'il n'est pas disponible en
-  eu-west-3, le lab 6 du J3 n'a plus de cible et D8 doit être **rouvert** — ce n'est pas un
-  changement de variable, ça déplace de l'infrastructure entre le socle et la workstation.
-  Repli identifié le cas échéant : MLflow local sur la workstation (option écartée lors de
-  l'arbitrage initial, à re-soumettre plutôt qu'à basculer silencieusement).
+- **SageMaker managed MLflow**: a managed tracking server, unique for the whole
+  cohort, created in the socle well ahead of the training (~20 min provisioning,
+  billed hourly).
+- One experiment per group, named `qc-<TEAM_ID>`. `sagemaker-mlflow:*` rights added
+  to the `qc-<TEAM_ID>-lab` role. `MLFLOW_TRACKING_URI` = the tracking server's ARN.
+- **Mandatory addition to `requirements.txt` (missing from the §11 stack)**: the
+  `sagemaker-mlflow` package. Without this plugin, the MLflow client doesn't talk to
+  the managed server and Day 3's fil-rouge lab 6 fails immediately.
+- Preflight check n°14 becomes **blocking**: the SKIP planned in §12 is cancelled,
+  since Day 3 depends on it.
+- To confirm in the console: managed MLflow availability in eu-west-3. **Verified on
+  07/28/2026 — risk lifted.** `list_mlflow_tracking_servers` responds in eu-west-3:
+  managed MLflow is available there. D8 doesn't need reopening, and falling back to
+  a local MLflow on the workstation is no longer necessary. Written in tranche 3
+  (`infra/terraform/socle/mlflow.tf`), behind `create_mlflow = false` — the server
+  is billed hourly from the moment it's created.
+- **Risk not covered, unlike D14.** The Bedrock model choice has a fallback scale
+  and changes with one variable; managed MLflow has none. If it's not available in
+  eu-west-3, Day 3's lab 6 no longer has a target and D8 must be **reopened** — this
+  isn't a variable change, it moves infrastructure between the socle and the
+  workstation. Fallback identified for that case: local MLflow on the workstation
+  (option set aside during the initial arbitration, to be resubmitted rather than
+  silently switched to).
 
-## D9 — Durcissement réseau
-- `enable_vpc_endpoints = false`. Les tâches sortent par la NAT.
-- Motif : à `true` tel que spécifié en §14, la sortie internet est supprimée — ce qui
-  casse le téléchargement du dataset SECOM (archive.ics.uci.edu), `pip install` et
-  `git clone`. La formation ne démarrerait pas.
-- Les endpoints d'interface (ECR api/dkr, SageMaker runtime, Bedrock runtime,
-  CloudWatch Logs, STS) restent **écrits et commentés** dans le Terraform, non appliqués,
-  et servent de **démonstration commentée en J2** — même traitement que ACM/HTTPS.
-- L'endpoint S3 de type gateway reste créé (gratuit).
+## D9 — Network hardening
 
-## D10 — Vérification et pilotage
-- Côté apprenant : `make check-day1` / `check-day2` / `check-day3`, sortie en tableau
-  PASS/FAIL par critère avec cause et action corrective — même format que `make preflight`,
-  pour que le vocabulaire d'erreur soit appris une seule fois.
-- Les checks portent sur l'**état AWS réel** sous le préfixe du groupe, pas sur le contenu
-  des fichiers (cf. D3). Ils lisent les noms depuis `src/qc/config.py` (cf. D7).
-- Chaque exécution écrit son résultat dans `s3://<bucket promo>/checks/<TEAM_ID>/`.
-- Côté formateur : `make dashboard` agrège l'état de tous les groupes en une commande.
-  Objectif : identifier un binôme bloqué sans faire le tour des écrans.
-- `pytest tests/` reste en place (§13) mais devient le harnais sous-jacent, pas
-  l'interface apprenant.
+- `enable_vpc_endpoints = false`. Tasks exit via the NAT.
+- Reason: at `true` as specified in §14, internet egress is removed — which breaks
+  the SECOM dataset download (archive.ics.uci.edu), `pip install` and `git clone`.
+  The training wouldn't get off the ground.
+- The interface endpoints (ECR api/dkr, SageMaker runtime, Bedrock runtime,
+  CloudWatch Logs, STS) remain **written and commented out** in the Terraform, not
+  applied, and serve as a **commented demonstration on Day 2** — same treatment as
+  ACM/HTTPS.
+- The S3 gateway endpoint remains created (free).
 
-## D11 — Déterminisme du jeu de données
-- Le dataset SECOM reste **téléchargé à l'exécution** via `ucimlrepo` (§13 respecté,
-  aucune donnée committée).
-- Mais la **liste des ~40 colonnes retenues est figée** dans un fichier versionné du
-  starter, et le split train/test utilise un **seed fixe**. Tous les binômes obtiennent
-  donc le même jeu, le même modèle (l'entraînement de la régression logistique est
-  déterministe, `random_state=42`), les mêmes contributions au J2 et la même baseline de
-  drift au J3 — condition nécessaire à des checks déterministes.
-- Un échantillon anonymisé de 50 lignes est committé pour les tests (déjà toléré §14).
-- **Risque résiduel** : dépendance à la disponibilité d'`archive.ics.uci.edu` le matin du
-  J1. Atténuation retenue : le dataset brut est pré-mis en cache dans la golden AMI, et
-  une copie de secours est déposée dans le bucket commun de la promo. Le code tente la
-  source, puis bascule sur le cache.
+## D10 — Verification and monitoring
 
-## D12 — Exposition de l'application et routage ALB
-- **Un seul ALB pour toute la promo**, créé dans `infra/terraform/socle/` avec son
-  écouteur :80 (action par défaut : 404 « groupe inconnu »).
-- ~~Le module `infra/terraform/team/` greffe sa propre `aws_lb_listener_rule` et son
-  `aws_lb_target_group`.~~ **Amendé le 30/07/2026 (revue technique, point 2)** : les
-  écritures `elasticloadbalancing` exigées par cette greffe portaient sur l'écouteur
-  partagé (`resources = ["*"]`), donc un binôme pouvait supprimer la règle d'un autre.
-  La règle `/<TEAM_ID>/*` et le groupe de cibles `qc-<TEAM_ID>-tg` sont désormais
-  **précréés par le socle** (`socle/alb_teams.tf`) ; le module `team/` lit l'ARN du
-  groupe de cibles dans les sorties du socle et y enregistre son service ECS. Le rôle
-  workstation n'a plus que `elasticloadbalancing:Describe*`. Le parallélisme des apply
-  est conservé.
-- La **priorité de règle** doit être unique par groupe : la dériver du TEAM_ID
-  (ex. `g01` → 10, `g02` → 20) — calculée dans le socle désormais.
-- **Correction d'un conflit de §14** : l'ALB ne réécrit pas le chemin, le conteneur reçoit
-  donc `GET /g01/`. Streamlit en configuration par défaut se croit à la racine et génère
-  ses ressources statiques et son websocket sur `/static/...` et `/_stcore/stream`, que
-  l'ALB ne sait pas router → page blanche, tâche saine, logs muets.
-- Correction retenue : l'application est démarrée avec `--server.baseUrlPath=<TEAM_ID>`,
-  injecté depuis `src/qc/config.py`. Le health check du groupe de cibles vise alors
+- Learner side: `make check-day1` / `check-day2` / `check-day3`, output as a
+  PASS/FAIL table per criterion with cause and corrective action — same format as
+  `make preflight`, so the error vocabulary is learned only once.
+- The checks target the **real AWS state** under the group's prefix, not the
+  content of the files (cf. D3). They read names from `src/qc/config.py` (cf. D7).
+- Each run writes its result to `s3://<cohort bucket>/checks/<TEAM_ID>/`.
+- Trainer side: `make dashboard` aggregates the state of all groups in one command.
+  Goal: spot a stuck pair without touring every screen.
+- `pytest tests/` stays in place (§13) but becomes the underlying harness, not the
+  learner-facing interface.
+
+## D11 — Dataset determinism
+
+- The SECOM dataset stays **downloaded at runtime** via `ucimlrepo` (§13 respected,
+  no committed data).
+- But the **list of ~40 selected columns is frozen** in a versioned starter file,
+  and the train/test split uses a **fixed seed**. All pairs therefore get the same
+  set, the same model (the logistic regression training is deterministic,
+  `random_state=42`), the same Day 2 contributions, and the same Day 3 drift
+  baseline — a necessary condition for deterministic checks.
+- An anonymized 50-row sample is committed for the tests (already tolerated in
+  §14).
+- **Residual risk**: dependency on `archive.ics.uci.edu`'s availability on Day 1
+  morning. Mitigation chosen: the raw dataset is pre-cached in the golden AMI, and
+  a backup copy is placed in the cohort's common bucket. The code tries the source,
+  then falls back to the cache.
+
+## D12 — Application exposure and ALB routing
+
+- **A single ALB for the whole cohort**, created in `infra/terraform/socle/` with
+  its :80 listener (default action: 404 "unknown group").
+- ~~The `infra/terraform/team/` module grafts its own `aws_lb_listener_rule` and its
+  `aws_lb_target_group`.~~ **Amended on 07/30/2026 (technical review, point 2)**:
+  the `elasticloadbalancing` write permissions required by this graft targeted the
+  shared listener (`resources = ["*"]`), so one pair could delete another's rule.
+  The `/<TEAM_ID>/*` rule and the `qc-<TEAM_ID>-tg` target group are now
+  **pre-created by the socle** (`socle/alb_teams.tf`); the `team/` module reads the
+  target group ARN from the socle's outputs and registers its ECS service there.
+  The workstation role now only has `elasticloadbalancing:Describe*`. Apply
+  parallelism is preserved.
+- The **rule priority** must be unique per group: derive it from the TEAM_ID (e.g.
+  `g01` -> 10, `g02` -> 20) — now computed in the socle.
+- **Fix for a §14 conflict**: the ALB doesn't rewrite the path, so the container
+  receives `GET /g01/`. Streamlit in default configuration thinks it's at the root
+  and generates its static assets and websocket at `/static/...` and
+  `/_stcore/stream`, which the ALB doesn't know how to route -> blank page, healthy
+  task, silent logs.
+- Fix adopted: the application is started with `--server.baseUrlPath=<TEAM_ID>`,
+  injected from `src/qc/config.py`. The target group's health check then targets
   `/<TEAM_ID>/_stcore/health`.
-- Ce mode d'échec est conservé comme **matériel pédagogique** : c'est exactement le type
-  d'incident que le J3 apprend à diagnostiquer.
+- This failure mode is kept as **teaching material**: it's exactly the kind of
+  incident Day 3 teaches how to diagnose.
 
-## D13 — Réorganisation du J3 (surcharge du lab 6)
-- Constat : le lab 6 de §8 tient 2 h 10 et contient six tâches techniques **plus** les
-  démonstrations orales. À N binômes × ~7 min, les orales seules consomment la moitié
-  du créneau. Le programme tel qu'écrit ne tient pas.
-- Décision : le **bloc Terraform sort du lab 6** et devient un lab court et autonome
-  placé juste après la masterclass 2 (modifier `desired_count` / `cpu` / `memory` /
-  rétention des logs, lire le `plan`, appliquer, vérifier l'effet).
-- Le lab 6 se recentre sur : injecter une dérive · comparer référence et production avec
-  Evidently · tracer dans MLflow · exposer `check_data_drift()` à l'agent.
-- Le challenge final et les démonstrations orales conservent leur temps.
-- Rien n'est retiré du programme : seul l'ordre change. §8 est à réécrire en conséquence.
+## D13 — Day 3 reorganization (lab 6 overload)
 
-## RÉSULTATS DE LA SONDE (2026-07-27, compte <identifiant de compte>, eu-west-3)
-> **Instantané du 27/07** — le rapport complet est `docs/02-decouverte-compte-2026-07-27.md`.
+- Finding: §8's lab 6 takes 2h10 and contains six technical tasks **plus** the oral
+  demos. With N pairs x ~7 min, the orals alone eat up half the slot. The program as
+  written doesn't fit.
+- Decision: the **Terraform block leaves lab 6** and becomes a short, standalone lab
+  placed right after masterclass 2 (modify `desired_count` / `cpu` / `memory` / log
+  retention, read the `plan`, apply, verify the effect).
+- Lab 6 refocuses on: injecting a drift, comparing reference and production with
+  Evidently, logging to MLflow, exposing `check_data_drift()` to the agent.
+- The final challenge and the oral demos keep their time slot.
+- Nothing is removed from the program: only the order changes. §8 needs to be
+  rewritten accordingly.
 
-- **Identité** : rôle SSO `AWSReservedSSO_MachineLearningSandboxAccess`.
-  Suffixe de bucket dérivé : `qc-<TEAM_ID>-data-<suffixe>`.
-- **D5 — RÉSOLU, favorablement.** Quotas `ml.m5.large` : **30** en entraînement,
-  **16** en endpoint. Largement suffisant pour la promo. Aucune demande
-  d'augmentation nécessaire. Le contrôle n°5 du preflight reste écrit, mais il ne
-  sera pas bloquant.
-- **D6 — CONFIRMÉ.** eu-west-3 expose bien 34 profils d'inférence, préfixés `eu.` et
-  `global.`. La correction du contrôle n°7 du preflight est donc nécessaire, comme
-  anticipé.
-- **D8 — CONFIRMÉ.** SageMaker managed MLflow est disponible en eu-west-3. Aucun
-  tracking server existant : à créer dans le socle. Le repli « MLflow local » n'a pas
-  à être rouvert.
-- **D14 — INVALIDÉ. Un seul modèle est réellement activé : `mistral.mistral-large-2402-v1:0`**
-  (appel Converse OK, tool use OK). Nova Lite, Nova Pro et **tous** les modèles
-  Anthropic renvoient `AccessDeniedException`, alors qu'ils sont au catalogue.
-  Cela valide rétrospectivement la décision D6 : la présence au catalogue ne vaut
-  pas accès, seul l'appel Converse réel le prouve.
-- ECR, ECS, ELBv2 et CloudWatch Logs : accessibles.
+## PROBE RESULTS (2026-07-27, account , eu-west-3)
 
-## D15 — Strands doit tourner en mode NON streaming (vérifié)
-- Constat, obtenu par `scripts/probe_model.py` : le provider Bedrock de Strands appelle
-  `ConverseStream` par défaut. Or Mistral Large ne supporte pas le tool use en streaming.
-  Résultat brut, sans configuration :
+> **07/27 snapshot** — the full report is
+> `docs/02-discovery-account-2026-07-27.md`.
+
+- **Identity**: SSO role `AWSReservedSSO_MachineLearningSandboxAccess`. Derived
+  bucket suffix: `qc-<TEAM_ID>-data-<suffix>`.
+- **D5 — RESOLVED, favorably.** `ml.m5.large` quotas: **30** for training, **16**
+  for endpoint. Comfortably enough for the cohort. No quota increase request
+  needed. Preflight check n°5 stays written, but it won't be blocking.
+- **D6 — CONFIRMED.** eu-west-3 does expose 34 inference profiles, prefixed `eu.`
+  and `global.`. The fix to preflight check n°7 is therefore necessary, as
+  anticipated.
+- **D8 — CONFIRMED.** SageMaker managed MLflow is available in eu-west-3. No
+  existing tracking server: to be created in the socle. The "local MLflow"
+  fallback doesn't need reopening.
+- **D14 — INVALIDATED. Only one model is actually enabled:
+  `mistral.mistral-large-2402-v1:0`** (Converse call OK, tool use OK). Nova Lite,
+  Nova Pro and **all** Anthropic models return `AccessDeniedException`, despite
+  being in the catalog. This retroactively validates decision D6: presence in the
+  catalog doesn't mean access, only the real Converse call proves it.
+- ECR, ECS, ELBv2 and CloudWatch Logs: accessible.
+
+## D15 — Strands must run in NON-streaming mode (verified)
+
+- Finding, obtained via `scripts/probe_model.py`: Strands's Bedrock provider calls
+  `ConverseStream` by default. But Mistral Large doesn't support tool use in
+  streaming. Raw result, with no configuration:
   `ValidationException: This model doesn't support tool use in streaming mode`.
-- Correction : instancier `BedrockModel(model_id=..., region_name=..., streaming=False)`.
-  Vérifié de bout en bout — l'agent appelle l'outil et cite la valeur retournée.
-- **Conséquence sur le starter** : ce paramètre doit être **pré-rempli et commenté** dans
-  `src/qc/agent.py`, jamais laissé en TODO. Sans lui, chaque binôme se heurte à une
-  ValidationException opaque au J2, sur un point qui n'a aucune valeur pédagogique.
-- Exploitation pédagogique possible en masterclass J2 : illustre que « le modèle supporte
-  le tool use » et « le modèle supporte le tool use dans ce mode d'appel » sont deux
-  affirmations distinctes.
-- Pixtral Large 25.02 (`eu.mistral.pixtral-large-2502-v1:0`), non testé par la première
-  sonde, est lui aussi refusé. Mistral Large 2402 reste le seul modèle utilisable.
+- Fix: instantiate `BedrockModel(model_id=..., region_name=..., streaming=False)`.
+  Verified end to end — the agent calls the tool and cites the returned value.
+- **Consequence on the starter**: this parameter must be **pre-filled and
+  commented** in `src/qc/agent.py`, never left as a TODO. Without it, every pair
+  hits an opaque ValidationException on Day 2, on a point with zero teaching
+  value.
+- Possible teaching use in the Day 2 masterclass: illustrates that "the model
+  supports tool use" and "the model supports tool use in this call mode" are two
+  distinct claims.
+- Pixtral Large 25.02 (`eu.mistral.pixtral-large-2502-v1:0`), untested by the
+  first probe, is also refused. Mistral Large 2402 remains the only usable model.
 
-## D14 — Modèle Bedrock
-- Contrainte : l'accès aux modèles Anthropic dans le compte n'est pas garanti. Le choix
-  se porte donc sur ce qui est **assurément activable**, pas sur le plus capable.
-- **DÉCISION FINALE, fondée sur la sonde : `mistral.mistral-large-2402-v1:0`.**
-  C'est le seul modèle réellement appelable dans le compte (Converse OK, tool use OK).
-  L'hypothèse initiale Amazon Nova Lite est abandonnée : Nova est au catalogue mais
-  renvoie `AccessDeniedException`, comme tous les modèles Anthropic.
-- Noter que c'est un **modelId brut**, pas un profil d'inférence `eu.*` — le preflight
-  doit donc bien accepter les deux formes (cf. D6).
-- Bénéfice secondaire : argument de souveraineté européenne, appréciable chez l'entreprise.
-- **Action ouverte pour le formateur** : déterminer en console (page « Model access »
-  de Bedrock, eu-west-3) si les refus viennent d'une activation manquante ou d'une
-  restriction IAM sur le rôle SSO `MachineLearningSandboxAccess`. Le fait que Nova —
-  modèle maison AWS, normalement le plus simple d'accès — soit lui aussi refusé penche
-  fortement vers la restriction IAM, donc vers une décision de l'IT plutôt qu'une case
-  à cocher.
-- Si un meilleur modèle est débloqué avant la formation : bascule en changeant
-  `BEDROCK_MODEL_ID`, plus une revérification du gabarit de `src/qc/agent.py` (SYSTEM_PROMPT).
-- **Le choix n'est pas structurant** : tout passe par l'API Converse et le provider Bedrock
-  de Strands. Changer de modèle = changer `BEDROCK_MODEL_ID`, aucune ligne applicative.
-- Seule contrainte réelle : le modèle doit supporter le **tool use** via Converse.
-- Conséquence sur `src/qc/agent.py` (SYSTEM_PROMPT) : le gabarit est écrit **contraint et explicite**, pour
-  tenir même sur un modèle léger. §7 demande d'obliger le LLM à citer les valeurs des
-  outils et de tester les cas ambigus — un modèle léger y résiste moins bien, ce qui reste
-  exploitable pédagogiquement mais impose un prompt plus verrouillé.
-- Le preflight (contrôle n°7) valide l'accès par un **appel Converse réel**, jamais par la
-  simple présence au catalogue (cf. D6).
-- À vérifier en console avant de figer : page « Model access » de Bedrock en eu-west-3
-  (l'API n'expose pas de façon fiable ce qui est *activé*, seulement ce qui est au
-  catalogue).
+## D14 — Bedrock model
 
-## Informations en attente (chemin critique) — [OBSOLÈTE : tranché depuis]
-- **Dates de la formation** et **effectif exact**. Conditionnent le planning des trois
-  items à long délai : demande d'accès aux modèles Bedrock, augmentation des quotas
-  SageMaker, construction et validation de la golden AMI.
-- Liste des services AWS interdits par les politiques de l'entreprise (§18, non tranché).
-- Durée retenue pour les démonstrations finales (§18, non tranché).
+- Constraint: access to Anthropic models in the account isn't guaranteed. The
+  choice therefore falls on what's **certainly activatable**, not the most
+  capable.
+- **FINAL DECISION, based on the probe: `mistral.mistral-large-2402-v1:0`.** It's
+  the only model actually callable in the account (Converse OK, tool use OK). The
+  initial Amazon Nova Lite hypothesis is abandoned: Nova is in the catalog but
+  returns `AccessDeniedException`, like all Anthropic models.
+- Note that this is a **raw modelId**, not an `eu.*` inference profile — preflight
+  must therefore accept both forms (cf. D6).
+- Secondary benefit: a European-sovereignty argument, appreciated by the company.
+- **Open action for the trainer**: determine in the console (Bedrock's "Model
+  access" page, eu-west-3) whether the refusals come from missing activation or an
+  IAM restriction on the `MachineLearningSandboxAccess` SSO role. The fact that
+  Nova — AWS's own model, normally the easiest to access — is also refused
+  strongly leans toward an IAM restriction, i.e. an IT decision rather than a
+  checkbox.
+- If a better model gets unlocked before the training: switch by changing
+  `BEDROCK_MODEL_ID`, plus a re-check of `src/qc/agent.py`'s template
+  (SYSTEM_PROMPT).
+- **The choice isn't structural**: everything goes through the Converse API and
+  Strands's Bedrock provider. Changing model = changing `BEDROCK_MODEL_ID`, no
+  application code line.
+- Only real constraint: the model must support **tool use** via Converse.
+- Consequence on `src/qc/agent.py` (SYSTEM_PROMPT): the template is written
+  **constrained and explicit**, to hold up even on a lightweight model. §7 asks
+  that the LLM be forced to cite tool values and that ambiguous cases be tested —
+  a lightweight model resists this less well, which stays exploitable
+  pedagogically but forces a more locked-down prompt.
+- Preflight (check n°7) validates access via a **real Converse call**, never
+  through mere presence in the catalog (cf. D6).
+- To verify in the console before locking in: Bedrock's "Model access" page in
+  eu-west-3 (the API doesn't reliably expose what's *activated*, only what's in
+  the catalog).
 
-## D16 — Écarts assumés du preflight par rapport à §12
-Décisions prises en écrivant `scripts/preflight.py`.
+## Pending information (critical path) — [OBSOLETE: since settled]
 
-- **Tous les contrôles sont exécutés, même après un échec.** §12 demande de s'arrêter net
-  au premier FAIL. Un rapport partiel n'a aucune valeur face à l'IT : mieux vaut la liste
-  complète des droits manquants qu'un premier échec isolé. Le code de sortie reste 1 dès
-  qu'un contrôle échoue, conformément à §12.
-- **Les contrôles dépendant du socle sont marqués comme tels.** Avant `make socle-apply`,
-  les contrôles 4, 6, 9 et 14 échouent normalement. Sans ce marquage, un formateur lisant
-  un preflight rouge avant d'avoir construit le socle croirait à un problème.
-- **Contrôle 3 (permissions) dégradé en SKIP sur rôle SSO.** `iam:SimulatePrincipalPolicy`
-  échoue fréquemment sur un rôle assumé. Le script convertit l'ARN de session en ARN de
-  rôle, et bascule en SKIP si l'appel reste refusé — les contrôles suivants testent les
-  droits réellement utilisés, ce qui est plus fiable qu'une simulation.
-- **Contrôle 9 : un `ACM_CERT_ARN` vide est un PASS, pas un manque.** C'est la valeur
-  normale du mode dégradé HTTP retenu en §14. Le traiter comme une erreur produirait un
-  faux négatif permanent.
-- **Contrôle 13 délégué à `uv`.** La résolution de `requirements.txt` et les imports sont
-  vérifiés dans un environnement jetable (`uv run --with-requirements`), ce qui valide au
-  passage que le fichier se résout réellement — l'intention réelle du contrôle.
-- **Contrôle 14 (MLflow) rendu bloquant**, cf. D8.
-- **Contrôle 7 (Bedrock) corrigé deux fois.** D'abord cf. D6 : il accepte modelId brut et
-  profil d'inférence, et fait foi sur l'appel Converse réel plutôt que sur la présence au
-  catalogue. Ensuite, il teste explicitement le **tool use** avec un `toolConfig`, pas
-  seulement l'appel simple — un modèle peut accepter Converse et refuser le tool use
-  (c'est précisément le cas de Mistral en streaming, cf. D15). Sans cette seconde sonde,
-  un changement de `BEDROCK_MODEL_ID` passerait au vert le matin et casserait l'agent
-  l'après-midi du J2. Le message d'échec renvoie vers `make probe`, qui teste en plus le
-  pilotage par Strands.
-- **Contrat de sortie vérifié** : 5 FAIL → code de sortie 1.
+- **Training dates** and **exact headcount**. These drive the scheduling of the
+  three long-lead items: Bedrock model access request, SageMaker quota increase,
+  golden AMI build and validation.
+- List of AWS services forbidden by the company's policies (§18, unsettled).
+- Duration reserved for the final demos (§18, unsettled).
+
+## D16 — Assumed deviations of preflight from §12
+
+Decisions made while writing `scripts/preflight.py`.
+
+- **All checks run, even after a failure.** §12 asks to stop dead at the first
+  FAIL. A partial report has no value in front of IT: better the full list of
+  missing rights than one isolated first failure. The exit code stays 1 as soon as
+  one check fails, per §12.
+- **Checks that depend on the socle are marked as such.** Before `make
+  socle-apply`, checks 4, 6, 9 and 14 fail normally. Without this marking, a
+  trainer reading a red preflight before building the socle would think there's a
+  problem.
+- **Check 3 (permissions) degraded to SKIP on an SSO role.**
+  `iam:SimulatePrincipalPolicy` often fails on an assumed role. The script
+  converts the session ARN to a role ARN, and falls back to SKIP if the call is
+  still refused — the following checks test the rights actually used, which is
+  more reliable than a simulation.
+- **Check 9: an empty `ACM_CERT_ARN` is a PASS, not a gap.** It's the normal value
+  for the degraded HTTP mode chosen in §14. Treating it as an error would produce
+  a permanent false negative.
+- **Check 13 delegated to `uv`.** Resolving `requirements.txt` and the imports is
+  verified in a throwaway environment (`uv run --with-requirements`), which also
+  validates that the file actually resolves — the check's real intent.
+- **Check 14 (MLflow) made blocking**, cf. D8.
+- **Check 7 (Bedrock) fixed twice.** First cf. D6: it accepts a raw modelId and an
+  inference profile, and relies on the real Converse call rather than catalog
+  presence. Then, it explicitly tests **tool use** with a `toolConfig`, not just
+  the plain call — a model can accept Converse and refuse tool use (exactly
+  Mistral's case in streaming, cf. D15). Without this second probe, a
+  `BEDROCK_MODEL_ID` change would show green in the morning and break the agent in
+  the Day 2 afternoon. The failure message points to `make probe`, which also
+  tests Strands-driven piloting.
+- **Exit contract verified**: 5 FAIL -> exit code 1.
 
 ## D17 — `src/qc/config.py`
-- Objet `config` unique, importé partout. Aucun script ne lit `os.environ` (§12).
-- Construction **paresseuse** (PEP 562 `__getattr__`) : importer `ROOT`, `DATA_DIR` ou
-  `ConfigError` ne construit pas la configuration. Avec une instance bâtie au chargement
-  du module, `uv run qc` et `uv run qc --help` échouaient sur une trace d'appels dès que
-  `.env` était incomplet — précisément au moment où l'apprenant cherche quoi remplir.
-- Validation à la construction avec message d'erreur portant l'**action corrective**,
-  pas seulement la cause.
-- `__repr__` redéfini pour ne jamais exposer un credential dans une trace ou un log ;
-  les clés secrètes sont écartées du dictionnaire d'environnement dès le chargement.
-- Les appels réseau sont **différés** : `account_id` et `account_suffix` sont des
-  `cached_property`, donc importer la configuration ne déclenche aucun appel AWS.
-- Helpers portant les décisions : `timestamped_name()` (D-unicité temporelle),
-  `streamlit_base_url_path` et `health_check_path` (D12), `mlflow_experiment` (D8),
-  `tags` / `tags_list` (support de `make destroy`).
-- `s3_uri()` rejette tout préfixe hors de la liste `raw/ curated/ capture/ baseline/
-  reports/` — évite qu'un binôme écrive à côté et fasse échouer un check pour une faute
-  de frappe.
 
-## D18 — Versions figées (`uv.lock`, 2026-07-27)
-- `make lock` exécuté : **238 paquets figés**, installation et imports vérifiés.
-- Versions clés : `evidently 0.7.21` · `mlflow 3.14.0` · `sagemaker-mlflow 0.5.0` ·
-  `strands-agents 1.50.1` · `scikit-learn 1.9.0` · `streamlit 1.60.0` · `boto3 1.43.56`.
-- MAJ 29/07/2026 (D25) : **170 paquets figés**. Le SDK `sagemaker`, `torch` (qu'il
-  traînait via sagemaker-serve), `xgboost` et `shap` sortent des dépendances
-  d'exécution — rien ne les importe depuis la migration. `xgboost` et `shap` restent
-  disponibles pour les notebooks d'exploration via le groupe `notebooks`.
-- Le contrôle 13 du preflight pointe désormais sur `uv.lock` s'il existe, et
-  avertit s'il est absent. Vérifier `requirements.txt` validerait une résolution que
-  personne n'installera.
-- **Piège Evidently 0.7 à documenter dans le `HINTS.md` du J3.** Les presets ont changé
-  de module : ils sont dans `evidently.presets`, et `evidently.metric_preset` n'existe
-  plus (`ModuleNotFoundError`). `DataDriftPreset` et `ClassificationPreset` existent
-  toujours, sous le nouveau chemin. Conséquence : **tout le code Evidently trouvable en
-  ligne cible la 0.4 et ne fonctionnera pas.** Un binôme bloqué qui cherche de l'aide
-  tombera sur des exemples faux. À dire explicitement plutôt qu'à laisser découvrir.
-- L'API `Report` a également évolué entre 0.4 et 0.7 : écrire le code du J3 contre la
-  version figée, jamais contre un souvenir ou un tutoriel.
+- Single `config` object, imported everywhere. No script reads `os.environ` (§12).
+- **Lazy** construction (PEP 562 `__getattr__`): importing `ROOT`, `DATA_DIR` or
+  `ConfigError` doesn't build the config. With an instance built at module load,
+  `uv run qc` and `uv run qc --help` used to fail on a traceback as soon as `.env`
+  was incomplete — exactly when the learner is trying to figure out what to fill
+  in.
+- Validation at construction time, with an error message carrying the
+  **corrective action**, not just the cause.
+- `__repr__` redefined to never expose a credential in a trace or a log; secret
+  keys are stripped from the environment dict as soon as it's loaded.
+- Network calls are **deferred**: `account_id` and `account_suffix` are
+  `cached_property`, so importing the config triggers no AWS call.
+- Helpers carrying the decisions: `timestamped_name()` (D-temporal uniqueness),
+  `streamlit_base_url_path` and `health_check_path` (D12), `mlflow_experiment`
+  (D8), `tags` / `tags_list` (support for `make destroy`).
+- `s3_uri()` rejects any prefix outside the list `raw/ curated/ capture/ baseline/
+  reports/` — prevents a pair from writing somewhere else and failing a check over
+  a typo.
 
-## D19 — Une application unique plutôt que des scripts numérotés (déroge à §13)
+## D18 — Frozen versions (`uv.lock`, 2026-07-27)
 
-§13 impose une arborescence `day1/01_load_secom.py`, `day1/02_upload_s3.py`, … Retenu à
-la place : **un seul paquet `src/qc/`, que les apprenants font grandir sur trois jours**,
-piloté par une commande unique `uv run qc <étape>`.
+- `make lock` run: **238 packages frozen**, install and imports verified.
+- Key versions: `evidently 0.7.21` / `mlflow 3.14.0` / `sagemaker-mlflow 0.5.0` /
+  `strands-agents 1.50.1` / `scikit-learn 1.9.0` / `streamlit 1.60.0` /
+  `boto3 1.43.56`.
+- Update 07/29/2026 (D25): **170 packages frozen**. The `sagemaker` SDK, `torch`
+  (which it was dragging in via sagemaker-serve), `xgboost` and `shap` drop out of
+  the runtime dependencies — nothing imports them since the migration. `xgboost`
+  and `shap` remain available for exploration notebooks via the `notebooks`
+  group.
+- Preflight check 13 now points at `uv.lock` if it exists, and warns if it's
+  absent. Checking `requirements.txt` would validate a resolution that no one
+  will install.
+- **Evidently 0.7 trap to document in Day 3's `HINTS.md`.** The presets have moved
+  module: they're in `evidently.presets`, and `evidently.metric_preset` no longer
+  exists (`ModuleNotFoundError`). `DataDriftPreset` and `ClassificationPreset`
+  still exist, at the new path. Consequence: **all the Evidently code found online
+  targets 0.4 and won't work.** A stuck pair looking for help will run into false
+  examples. Say it explicitly rather than let it be discovered.
+- The `Report` API also evolved between 0.4 and 0.7: write Day 3's code against
+  the frozen version, never from memory or a tutorial.
 
-- **L'exigence de fond de §13 est préservée** : arborescence strictement identique entre
-  la solution et le starter, TODO numérotés (`TODO-D1-03`), seuls les corps de fonctions
-  diffèrent. Seule la *forme* de l'arborescence change.
-- **Un TODO gagne à être dans une fonction typée.** `def split(dataset: Dataset,
-  features: list[str]) -> Split:` dit à l'apprenant ce qu'il doit produire et avec quel
-  type. Au milieu d'un script de 255 lignes, un TODO ne dit que « écris ici ».
-- **Le J2 réutilise le J1 sans copier.** C'était le défaut réel de la structure en
-  scripts : pour retrouver la liste des variables ou invoquer l'endpoint, le J2 aurait
-  dupliqué le code du J1 — les fichiers `01_*.py` ne sont pas importables, leur nom
-  commence par un chiffre. Le défaut aurait explosé au J2, pas au J1.
-- **Livrable final** : l'apprenant repart avec une application cohérente, pas quinze
-  scripts. C'est ce qu'il peut effectivement reprendre chez l'entreprise.
-- **Disposition `src/`** (recommandation officielle du Python Packaging Authority) : le
-  paquet n'est importable qu'une fois installé, donc les tests testent ce qui est livré.
-- **Ce qui remplace l'ordre visible dans l'arborescence** : `uv run qc` sans argument
-  affiche le tableau d'avancement, qui dit *où on en est* et pas seulement ce qui existe.
-  Plus utile qu'un `ls`, pour l'apprenant qui revient de pause comme pour le formateur
-  qui passe derrière lui.
-- **Structure plate assumée** : un module par étape du cycle de vie (`secom`, `storage`,
-  `training`, `inference`, `agent`, `monitoring`), aucun sous-paquet. On ne transforme un
-  module en dossier que s'il dépasse ~300 lignes ou gagne une seconde implémentation.
-  Découper à l'avance, c'est deviner.
-- **Séparation calcul / affichage** : les modules ne font aucun `print`, tout l'affichage
-  est dans `qc/cli.py`. Sans cela, l'agent du J2 qui appelle `qc.inference.predict()`
-  récupérerait des `print` au milieu de sa trace.
-- **Seule entorse** : `scripts/preflight.py` reste un script PEP 723 autonome avec un
-  `sys.path.insert(ROOT / "src")`. Il doit tourner sur une machine neuve, et son contrôle
-  n°13 vérifie justement que `uv sync` fonctionne — il ne peut pas en dépendre.
+## D19 — One single application rather than numbered scripts (deviates from §13)
 
-## D20 — Horodatages SECOM : 604 lignes sur 1567 étaient perdues silencieusement
+§13 requires a `day1/01_load_secom.py`, `day1/02_upload_s3.py`, ... layout. Chosen
+instead: **a single `src/qc/` package that learners grow over three days**, driven
+by a single `uv run qc <step>` command.
 
-Le fichier UCI mélange **deux formats** d'horodatage : `19/07/2008 11:55:00` et
-`1/8/2008 2:02` (sans zéro de tête ni secondes). Le format fixe `%d/%m/%Y %H:%M:%S`
-assorti de `errors="coerce"` convertissait **38 % du jeu en `NaT`, sans un mot**.
+- **§13's underlying requirement is preserved**: strictly identical layout between
+  the solution and the starter, numbered TODOs (`TODO-D1-03`), only the function
+  bodies differ. Only the layout's *shape* changes.
+- **A TODO benefits from living in a typed function.** `def split(dataset:
+  Dataset, features: list[str]) -> Split:` tells the learner what they must
+  produce and with what type. In the middle of a 255-line script, a TODO only
+  says "write here."
+- **Day 2 reuses Day 1 without copying.** That was the real flaw of the
+  script-based structure: to retrieve the variable list or invoke the endpoint,
+  Day 2 would have duplicated Day 1's code — files named `01_*.py` aren't
+  importable, their name starts with a digit. The flaw would have exploded on Day
+  2, not Day 1.
+- **Final deliverable**: the learner leaves with a coherent application, not
+  fifteen scripts. That's what they can actually take back to their company.
+- **`src/` layout** (Python Packaging Authority's official recommendation): the
+  package is only importable once installed, so the tests test what's actually
+  shipped.
+- **What replaces the visible order in the file tree**: `uv run qc` with no
+  argument displays the progress table, which says *where things stand*, not just
+  what exists. More useful than an `ls`, both for the learner coming back from a
+  break and the trainer checking in on them.
+- **Deliberately flat structure**: one module per lifecycle step (`secom`,
+  `storage`, `training`, `inference`, `agent`, `monitoring`), no sub-packages. A
+  module only becomes a folder if it exceeds ~300 lines or gains a second
+  implementation. Splitting ahead of time is guessing.
+- **Compute / display separation**: modules do no `print` at all, all display
+  lives in `qc/cli.py`. Without this, Day 2's agent calling
+  `qc.inference.predict()` would pick up `print` output in the middle of its
+  trace.
+- **Only exception**: `scripts/preflight.py` stays a standalone PEP 723 script
+  with a `sys.path.insert(ROOT / "src")`. It must run on a brand-new machine, and
+  its check n°13 specifically verifies that `uv sync` works — it can't depend on
+  that itself.
 
-- Conséquence si non corrigé : la dérive **temporelle** du J3 — comparer les premières
-  semaines de production aux dernières — se serait calculée sur 62 % des données, et le
-  tri chronologique aurait placé 604 lignes n'importe où.
-- Corrigé par `format="mixed", dayfirst=True`. `dayfirst` lève l'ambiguïté de `1/8/2008` :
-  le jeu couvre juillet à octobre 2008, donc le 1er août, jamais le 8 janvier.
-- Vérifié : 0 `NaT`, période inchangée (19/07/2008 → 17/10/2008), tri monotone.
-- **Leçon à porter dans le code du J3** : `errors="coerce"` transforme une erreur bruyante
-  en perte de données silencieuse. Ne l'utiliser que lorsqu'on vérifie ensuite ce qui a
-  été écarté.
+## D20 — SECOM timestamps: 604 out of 1567 rows were being silently lost
 
-## D21 — L'isolation entre groupes n'existe pas encore (27/07/2026)
+The UCI file mixes **two** timestamp formats: `19/07/2008 11:55:00` and `1/8/2008
+2:02` (no leading zero, no seconds). The fixed format `%d/%m/%Y %H:%M:%S` combined
+with `errors="coerce"` was converting **38% of the dataset to `NaT`, without a
+word**.
 
-`storage.probe_isolation("g02")`, exécutée depuis le poste formateur, **a lu le bucket
-d'un autre groupe**. Vérification faite : ce n'est pas un défaut de la tranche 1, c'est
-une fonctionnalité qui n'a simplement pas encore été écrite.
+- Consequence if uncorrected: Day 3's **temporal** drift — comparing production's
+  early weeks to its latest ones — would have been computed on 62% of the data,
+  and chronological sorting would have scattered 604 rows randomly.
+- Fixed with `format="mixed", dayfirst=True`. `dayfirst` resolves `1/8/2008`'s
+  ambiguity: the dataset spans July to October 2008, so it's August 1st, never
+  January 8th.
+- Verified: 0 `NaT`, unchanged period (07/19/2008 -> 10/17/2008), monotonic sort.
+- **Lesson to carry into Day 3's code**: `errors="coerce"` turns a noisy error
+  into silent data loss. Only use it when you then check what got discarded.
 
-Le socle scope bien une politique par groupe — mais sur `qc-gNN-sagemaker-exec`, le rôle
-que **SageMaker** endosse. Rien ne contraint l'identité depuis laquelle **l'apprenant**
-agit. Or c'est celle-là qui compte pour l'isolation : un binôme qui se trompe de valeur
-dans `S3_BUCKET` écrase aujourd'hui les données d'un autre, sans rencontrer le moindre
-refus.
+## D21 — Isolation between groups doesn't exist yet (07/27/2026)
 
-- Le README annonçait cette isolation comme l'un des trois piliers du compte partagé.
-  C'était faux. Reformulé en « à venir — tranche 2 » plutôt que corrigé en silence.
-- À écrire en tranche 2 : un profil d'instance par groupe, porté par la machine de
-  travail, avec une politique conditionnée par le préfixe `qc-<TEAM_ID>-*`.
-- Tant que ce n'est pas fait, le lab « AccessDenied volontaire » du J1 **ne peut pas
-  fonctionner** : il n'y a rien pour refuser. C'est un prérequis pédagogique, pas
-  seulement un durcissement.
-- `probe_isolation()` distingue désormais les deux situations dans son message : sous une
-  identité de formateur, une lecture réussie est normale ; depuis la machine d'un binôme,
-  elle signale un profil d'instance non scopé.
+`storage.probe_isolation("g02")`, run from the trainer's workstation, **read
+another group's bucket**. Verified: this isn't a tranche-1 defect, it's a feature
+that simply hasn't been written yet.
 
-**Écrit en tranche 2 (28/07/2026)** — `infra/terraform/socle/workstations.tf` crée
-`qc-<TEAM_ID>-workstation-profile`, dont la politique borne S3, SageMaker, ECR, ECS, les
-logs et Bedrock au seul préfixe du groupe. Le refus de lire le bucket d'un autre devient
-un refus implicite : rien ne l'autorise. Reste à confirmer par un `probe_isolation()`
-lancé **depuis une machine de travail**, une fois la tranche appliquée — c'est le seul
-endroit où le profil s'applique. Depuis le poste formateur, la lecture réussira toujours.
+The socle does scope a policy per group — but on `qc-gNN-sagemaker-exec`, the role
+that **SageMaker** assumes. Nothing constrains the identity the **learner** acts
+from. Yet that's the one that matters for isolation: a pair who gets the value
+wrong in `S3_BUCKET` today overwrites another group's data without hitting the
+slightest refusal.
 
-Deux limites sont assumées et commentées dans le code :
+- The README announced this isolation as one of the shared account's three
+  pillars. That was false. Reworded as "coming — tranche 2" rather than silently
+  fixed.
+- To write in tranche 2: one instance profile per group, carried by the work
+  machine, with a policy conditioned on the `qc-<TEAM_ID>-*` prefix.
+- Until this is done, Day 1's "deliberate AccessDenied" lab **can't work**:
+  there's nothing to refuse. It's a teaching prerequisite, not just a hardening
+  measure.
+- `probe_isolation()` now distinguishes the two situations in its message: under a
+  trainer identity, a successful read is normal; from a pair's machine, it
+  signals an unscoped instance profile.
 
-- les actions que l'API AWS ne permet pas de borner par ressource (lister des jobs,
-  obtenir un jeton ECR, lire des métriques) restent ouvertes en **lecture** ;
-- `elasticloadbalancing:CreateRule` porte sur l'ARN de l'écouteur, partagé par toute la
-  promotion. Un binôme peut donc techniquement supprimer la règle d'un autre. Le risque
-  suppose un geste délibéré et se répare en quelques secondes par un `apply` du module
-  `team/`.
+**Written in tranche 2 (07/28/2026)** — `infra/terraform/socle/workstations.tf`
+creates `qc-<TEAM_ID>-workstation-profile`, whose policy bounds S3, SageMaker,
+ECR, ECS, the logs and Bedrock to the group's own prefix alone. Refusing to read
+another bucket becomes an implicit denial: nothing authorizes it. Still to
+confirm with a `probe_isolation()` run **from a work machine**, once the tranche
+is applied — it's the only place where the profile applies. From the trainer's
+machine, the read will still succeed.
 
-## D22 — Un cluster ECS par groupe, créé dans le socle (28/07/2026)
+Two limits are accepted and commented in the code:
 
-Le programme se contredisait : la règle de nommage impose `qc-<TEAM_ID>-cluster`, et le
-paragraphe sur la séparation des états parle d'un cluster unique appartenant au socle.
+- actions the AWS API doesn't allow scoping by resource (listing jobs, getting an
+  ECR token, reading metrics) remain open in **read**;
+- `elasticloadbalancing:CreateRule` targets the listener's ARN, shared by the
+  whole cohort. A pair can therefore technically delete another's rule. The risk
+  assumes a deliberate act and is fixed within seconds by a `team/` module
+  `apply`.
 
-Tranché en faveur du nommage par préfixe : un cluster ECS ne coûte rien, ce n'est qu'un
-regroupement logique, alors que le préfixe porte l'isolation et les conditions IAM. Les
-clusters sont donc **par groupe**, et **créés dans le socle** pour que le
-`terraform destroy` du J3 ne puisse pas les emporter.
+## D22 — One ECS cluster per group, created in the socle (07/28/2026)
 
-Corollaire : `FARGATE` reste le fournisseur de capacité par défaut, `FARGATE_SPOT` est
-déclaré mais non utilisé par défaut. Une tâche Spot peut être interrompue avec deux
-minutes de préavis, ce qui ferait disparaître l'application d'un binôme au milieu d'une
-démonstration.
+The program contradicted itself: the naming rule requires `qc-<TEAM_ID>-cluster`,
+and the paragraph on state separation talks about a single cluster belonging to
+the socle.
 
-## Corrections appliquées à `docs/00-programme.md` (27/07/2026) — FAIT
+Settled in favor of prefix naming: an ECS cluster costs nothing, it's just a
+logical grouping, whereas the prefix carries isolation and IAM conditions.
+Clusters are therefore **per group**, and **created in the socle** so that Day
+3's `terraform destroy` can't take them down.
 
-Le document était **splicé** à six endroits : des fins de phrases avaient migré à la fin
-d'une autre section. Chaque fragment a été recollé à sa phrase d'origine ; aucun mot n'a
-été inventé ni supprimé, seulement déplacé.
+Corollary: `FARGATE` stays the default capacity provider, `FARGATE_SPOT` is
+declared but not used by default. A Spot task can be interrupted with two
+minutes' notice, which would make a pair's application disappear mid-demo.
 
-| § | Phrase tronquée | Fragment retrouvé en |
+## Corrections applied to `docs/00-programme.md` (07/27/2026) — DONE
+
+The document was **spliced** in six places: sentence endings had migrated to the
+end of another section. Each fragment was reattached to its original sentence; no
+word was invented or removed, only moved.
+
+| § | Truncated sentence | Fragment found in |
 | --- | --- | --- |
-| 4 | « Des checkpoints récupérables… » | fin de §4 |
-| 8 | « Livrable J3 : … et lecture du » | fin du squelette J3 (« socle Terraform. ») |
-| 11 | « 1) boucle tool use brute en Converse » | fin de §12, après « Nettoyage » |
-| 13 | « le dataset est téléchargé via ucimlrepo, » | fin de §14, après les coûts |
-| 14 | « …via default_tags au niveau » | fin du paragraphe quotas (« du provider. ») |
-| 14 | « bucket qc-<TEAM_ID>-tfstate créé » | fin du module team (« par une étape d'amorçage. ») |
+| 4 | "Recoverable checkpoints..." | end of §4 |
+| 8 | "Day 3 deliverable: ... and reading the" | end of the Day 3 skeleton ("Terraform socle.") |
+| 11 | "1) raw tool-use loop in Converse" | end of §12, after "Cleanup" |
+| 13 | "the dataset is downloaded via ucimlrepo," | end of §14, after the costs |
+| 14 | "...via default_tags at the" | end of the quotas paragraph ("of the provider.") |
+| 14 | "bucket qc-<TEAM_ID>-tfstate created" | end of the team module ("by a bootstrap step.") |
 
-Deux **erreurs factuelles** de §3 ont également été corrigées, chacune signalée sur place
-par un encadré daté plutôt que réécrite en silence — le document est la source de vérité
-d'agents de code, une correction invisible se reperdrait :
+Two **factual errors** in §3 were also corrected, each flagged in place by a
+dated callout rather than silently rewritten — the document is the source of
+truth for code agents, a silent correction would get lost again:
 
-- **591 → 590 mesures capteurs.** La fiche UCI affiche « 591 features » parce qu'elle
-  compte `timestamp` comme une variable, ce qu'il n'est pas.
-- **L'extrait de chargement ne s'exécutait pas.** `X = secom.data.features ;
-  y = secom.data.targets` lève `AttributeError` : les deux valent `None` pour SECOM. Le
-  document indique désormais `data.original` et renvoie vers `src/qc/secom.py`. Le piège
-  des deux formats d'horodatage (D20) y est documenté au même endroit.
+- **591 -> 590 sensor measurements.** The UCI sheet shows "591 features" because
+  it counts `timestamp` as a variable, which it isn't.
+- **The loading snippet didn't run.** `X = secom.data.features ; y =
+  secom.data.targets` raises `AttributeError`: both are `None` for SECOM. The
+  document now points to `data.original` and refers to `src/qc/secom.py`. The
+  two-timestamp-format trap (D20) is documented at the same spot.
 
-**Reste volontairement non corrigé** : §13 décrit une arborescence `day1/ day2/ day3/`
-que D19 remplace par le paquet `src/qc/`. Ce n'est pas une erreur de rédaction mais un
-arbitrage assumé, tracé en D19 — le corriger dans le programme masquerait la dérogation.
-Même chose pour l'en-tête (« binômes ») que §4 contredit (« trinômes recommandés ») :
-c'est à trancher avec l'effectif réel, pas par une retouche du document.
+**Deliberately left uncorrected**: §13 describes a `day1/ day2/ day3/` layout that
+D19 replaces with the `src/qc/` package. This isn't a writing error but a
+deliberate arbitration, tracked in D19 — fixing it in the program would hide the
+deviation. Same for the header ("pairs") that §4 contradicts ("trios
+recommended"): that's to be settled against the real headcount, not by a
+document tweak.
 
+## D23 — Corrections from the cross-review (07/28/2026)
 
-## D23 — Corrections issues de la revue croisée (28/07/2026)
+Three independent reviews of the repo: a code/docs/decisions consistency review,
+an audit of the starter repo, a re-read of the slides against their spec. What
+they found, and what was decided.
 
-Trois relectures indépendantes du dépôt : une revue de cohérence code/doc/décisions, un
-audit du dépôt starter, une relecture des slides contre leur spécification. Ce qu'elles
-ont trouvé, et ce qui a été décidé.
+### Fixed
 
-### Corrigé
+- **MLflow rights missing from the learner profile.** D8 requires them; the work
+  machine's policy had none. Two families are needed:
+  `sagemaker:*MlflowTracking*` to talk to the server, and `sagemaker-mlflow:*` for
+  the MLflow API, which AWS exposes as a separate service. Granting only the
+  first gives an `AccessDenied` on the first `log_metric`, in a message that
+  names neither one. Tested until now from an admin identity, which was masking
+  the gap.
+- **`env_fragment` incomplete.** It carried neither `MLFLOW_TRACKING_URI` nor
+  `TEAMS_COUNT`, even though `make env-from-tf` is presented as the only way to
+  fill `.env`. `TEAMS_COUNT` is now derived from `length(var.teams)`, as D1
+  required: a headcount change in Terraform now propagates to preflight's quota
+  check.
+- **`make restore-day2` promised by D4 and missing.** Written, modeled on
+  `restore_day1`: incremental, and it starts by calling the latter since Day 2
+  only stands if Day 1's endpoint responds. It does NOT apply the `team/`
+  module — that's Terraform, it belongs to the pair, and replaying it for them
+  would remove the one place in the course where they read a `plan`.
+- **`check_day2` was rebuilding resource names** instead of reading them from
+  `qc.config`, against D7 and D10. An override in `.env` would then check
+  something other than what was actually deployed.
+- **`make destroy` and `make slides`**, both announced by the program, errored
+  out. `destroy` chains the endpoint shutdown and the destruction of the `team/`
+  module; `slides` produces the PDFs via `marp-cli`.
+- **Catch-up tags.** D3 announced `day1-end` / `day2-end`; the tags actually
+  placed are `j1-fin` / `j2-fin`. The decision was following names that didn't
+  exist.
+- **Dead references** in the decisions: `shared/config.py`,
+  `agent/agent_strands.py`, `app/prompts.py`, `requirements.lock`. The real files
+  are `src/qc/config.py`, `src/qc/agent.py` and `uv.lock`.
 
-- **Droits MLflow absents du profil apprenant.** D8 les exige ; la politique de la
-  machine de travail n'en contenait aucun. Il en faut DEUX familles :
-  `sagemaker:*MlflowTracking*` pour dialoguer avec le serveur, et `sagemaker-mlflow:*`
-  pour l'API MLflow, qu'AWS expose sous un service distinct. N'accorder que la première
-  donne un `AccessDenied` au premier `log_metric`, sur un message qui ne nomme ni l'une
-  ni l'autre. Testé jusqu'ici depuis une identité d'administration, qui masquait le
-  manque.
-- **`env_fragment` incomplet.** Il ne portait ni `MLFLOW_TRACKING_URI` ni `TEAMS_COUNT`,
-  alors que `make env-from-tf` est présenté comme la seule façon de remplir `.env`.
-  `TEAMS_COUNT` est désormais dérivé de `length(var.teams)`, ce que D1 demandait : un
-  effectif modifié dans Terraform se propage au contrôle de quota du preflight.
-- **`make restore-day2` promis par D4 et absent.** Écrit, sur le modèle de
-  `restore_day1` : incrémental, et il commence par appeler ce dernier puisque le J2 ne
-  tient debout que si l'endpoint du J1 répond. Il n'applique PAS le module `team/` —
-  c'est du Terraform, il appartient au binôme, et le rejouer à sa place lui retirerait le
-  seul endroit du parcours où il lit un `plan`.
-- **`check_day2` reconstruisait les noms de ressources** au lieu de les lire dans
-  `qc.config`, contre D7 et D10. Une surcharge dans `.env` faisait alors contrôler autre
-  chose que ce qui était déployé.
-- **`make destroy` et `make slides`**, tous deux annoncés par le programme, sortaient en
-  erreur. `destroy` enchaîne l'extinction de l'endpoint et la destruction du module
-  `team/` ; `slides` produit les PDF par `marp-cli`.
-- **Tags de reprise.** D3 annonçait `day1-end` / `day2-end` ; les tags réellement posés
-  sont `j1-fin` / `j2-fin`. La décision suivait des noms inexistants.
-- **Références mortes** dans les décisions : `shared/config.py`, `agent/agent_strands.py`,
-  `app/prompts.py`, `requirements.lock`. Les fichiers réels sont `src/qc/config.py`,
-  `src/qc/agent.py` et `uv.lock`.
+### Decided, not fixed
 
-### Décidé, non corrigé
-
-- **D4 est dépassée sur `restore-day1`.** Elle décrit une reprise intégrale d'un quart
-  d'heure ; le script est incrémental et ne rejoue que ce qui manque. Le comportement
-  actuel est meilleur : la décision est marquée obsolète plutôt que le code aligné
-  dessus.
-- ~~**Le tableau de bord formateur de D10 reste à écrire.**~~ Écrit le 30/07/2026
-  (revue technique, point 6) — sous une autre forme que l'agrégation S3 imaginée par
-  D10 : `make dashboard` crée un dashboard CloudWatch par groupe
-  (`scripts/dashboard.py` — invocations et 4XX de l'endpoint, ModelLatency en µs,
-  RunningTaskCount ECS, état des trois alarmes), le relit en preuve, et
-  `make dashboard-destroy` nettoie. La requête Logs Insights compagne est dans
-  `scripts/logs_insights_erreurs_app.query`. Les checks continuent d'afficher sans
-  déposer sous `checks/<TEAM_ID>/`.
-- **`discover.py` et `probe_model.py` lisent `os.environ` directement**, contre la règle
-  posée par D17. Ce sont des scripts de diagnostic autonomes, exécutables avant que
-  `qc.config` ne soit renseigné — c'est précisément leur rôle. La règle vaut pour le
-  paquet `qc`, pas pour eux.
+- **D4 is superseded on `restore-day1`.** It describes a full replay taking a
+  quarter hour; the script is incremental and only replays what's missing. The
+  current behavior is better: the decision is marked obsolete rather than the
+  code aligned to it.
+- ~~**The trainer dashboard from D10 is still to be written.**~~ Written on
+  07/30/2026 (technical review, point 6) — in a different form than the S3
+  aggregation D10 imagined: `make dashboard` creates one CloudWatch dashboard per
+  group (`scripts/dashboard.py` — endpoint invocations and 4XXs, ModelLatency in
+  µs, ECS RunningTaskCount, state of the three alarms), reads it back as proof,
+  and `make dashboard-destroy` cleans up. The companion Logs Insights query is in
+  `scripts/logs_insights_erreurs_app.query`. The checks keep displaying without
+  being written under `checks/<TEAM_ID>/`.
+- **`discover.py` and `probe_model.py` read `os.environ` directly**, against the
+  rule set by D17. They're standalone diagnostic scripts, runnable before
+  `qc.config` has been filled in — that's exactly their role. The rule applies
+  to the `qc` package, not to them.
 
 ---
 
-## D24 — La suite de tests joignait AWS sans le dire (28/07/2026)
+## D24 — The test suite was reaching AWS without saying so (07/28/2026)
 
-`conftest.py` remplace `config.client` par une fabrique de clients factices : les tests
-vérifient le contenu des appels au lieu de les envoyer. Quatorze tests passaient malgré
-tout par le réseau.
+`conftest.py` replaces `config.client` with a factory of fake clients: the tests
+verify the content of the calls instead of sending them. Fourteen tests were
+still going over the network regardless.
 
-`config.account_id` ouvre son propre client STS par `boto3.Session`, hors de
-`config.client`. Tout test dont le chemin touche `s3_bucket` — dont le nom dérive du
-suffixe de compte — appelait donc réellement `GetCallerIdentity`.
+`config.account_id` opens its own STS client via `boto3.Session`, outside
+`config.client`. Any test whose path touches `s3_bucket` — whose name derives
+from the account suffix — was therefore really calling `GetCallerIdentity`.
 
-Le défaut est invisible tant que les identifiants sont valides. Il apparaît sur
-`ExpiredToken`, au moment où le nom de la ressource testée n'a plus rien à voir avec le
-problème. C'est la forme classique d'un test qui ment : il passe pour une raison qui n'est
-pas celle qu'il annonce.
+The flaw is invisible as long as credentials are valid. It shows up on
+`ExpiredToken`, right when the resource name under test has nothing to do with
+the problem anymore. It's the classic shape of a test that lies: it passes for a
+reason that isn't the one it announces.
 
-La fixture `aws` écrit maintenant un identifiant de compte factice directement dans le
-`__dict__` de `config` — c'est là que `cached_property` range sa valeur, l'y écrire revient
-à la mettre en cache. On passe par le dictionnaire plutôt que par `monkeypatch.setattr`,
-qui lit l'ancienne valeur avant d'écrire, et cette lecture déclencherait justement l'appel
-STS. Les trois valeurs en cache sont vidées avant et après chaque test, `config` étant un
-singleton partagé par toute la session.
+The `aws` fixture now writes a fake account ID directly into `config`'s
+`__dict__` — that's where `cached_property` stores its value, writing there
+amounts to caching it. Going through the dict rather than
+`monkeypatch.setattr`, which reads the old value before writing, and that read
+would trigger exactly the STS call. The three cached values are cleared before
+and after every test, since `config` is a singleton shared by the whole
+session.
 
-Contrôle qui vaut la peine d'être rejoué après toute modification de `conftest.py` :
+Check worth rerunning after any change to `conftest.py`:
 
-```bash
+```
 env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
   AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null \
   uv run --frozen pytest tests/
 ```
 
-Une suite qui ne prétend pas joindre AWS doit passer sans aucun identifiant.
+A suite that doesn't claim to reach AWS must pass with no credentials at all.
 
-## D25 — La régression logistique remplace XGBoost (« D-optim », 29/07/2026)
+## D25 — Logistic regression replaces XGBoost ("D-optim", 07/29/2026)
 
-- Le candidat validé du notebook `exploration-modelisation-secom-optim.ipynb` devient
-  **le** modèle du fil rouge : imputation médiane → standardisation → régression
-  logistique régularisée (`C=0.01`), poids de classe calculé sur le train.
-- **Ce qui a tranché** : au seuil sélectionné de la même façon (F2, hors-fold sur le
-  train), rappel des défauts **57,7 % contre 7,7 %** pour la baseline XGBoost, average
-  precision **0,236 contre 0,180**. Validation temporelle (train passé → test futur) :
-  AP 0,308, ROC-AUC 0,759. Confirmé par un job SageMaker réel le 29/07 (2 min 09,
-  `validation:average_precision 0.2364`, `validation:recall 0.5769`).
-- **Conséquences d'architecture** :
-  - plus d'algorithme intégré : **mode script** sur le conteneur SKLearn officiel
-    (`sagemaker-scikit-learn:1.2-1`, même compte de registre `659782779980`), archive de
-    code `model/code/sourcedir.tar.gz`, contrat `sagemaker_program` /
-    `sagemaker_submit_directory` en valeurs JSON-encodées ;
-  - les métriques passent par `MetricDefinitions` (regex sur les logs du script) ;
-  - le **seuil de décision est un livrable de l'entraînement** (`threshold.json` dans
-    l'artefact, 0,58 mesuré) — `Prediction.label()` n'a plus de défaut à 0,50 ;
-  - l'explication passe de TreeSHAP aux **contributions linéaires exactes**, calculées
-    depuis les paramètres ajustés du pipeline (`statistics_`, `mean_`, `scale_`,
-    `coef_`), jamais par `transform()` sur l'objet dépicklé — l'artefact est écrit par
-    le scikit-learn 1.2 du conteneur et relu par un 1.9 local (incident du 29/07,
-    documenté au J3).
-- Le contrat externe ne bouge pas : CSV sans en-tête en entrée, un score par ligne en
-  sortie — la data capture et le J3 ne voient pas la différence.
+- The validated candidate from the
+  `exploration-modelisation-secom-optim.ipynb` notebook becomes **the**
+  fil-rouge model: median imputation -> standardization -> regularized logistic
+  regression (`C=0.01`), class weight computed on the train set.
+- **What decided it**: at the threshold picked the same way (F2, out-of-fold on
+  the train set), defect recall of **57.7% vs 7.7%** for the XGBoost baseline,
+  average precision **0.236 vs 0.180**. Temporal validation (past train -> future
+  test): AP 0.308, ROC-AUC 0.759. Confirmed by a real SageMaker job on 07/29
+  (2 min 09, `validation:average_precision 0.2364`, `validation:recall 0.5769`).
+- **Architecture consequences**:
+  - no more built-in algorithm: **script mode** on the official SKLearn
+    container (`sagemaker-scikit-learn:1.2-1`, same registry account
+    `659782779980`), code archive `model/code/sourcedir.tar.gz`,
+    `sagemaker_program` / `sagemaker_submit_directory` contract as
+    JSON-encoded values;
+  - metrics go through `MetricDefinitions` (regex on the script's logs);
+  - the **decision threshold is a training deliverable** (`threshold.json` in
+    the artifact, 0.58 measured) — `Prediction.label()` no longer has a 0.50
+    default;
+  - the explanation moves from TreeSHAP to **exact linear contributions**,
+    computed from the pipeline's fitted parameters (`statistics_`, `mean_`,
+    `scale_`, `coef_`), never via `transform()` on the unpickled object — the
+    artifact is written by the container's scikit-learn 1.2 and reread by a
+    local 1.9 (07/29 incident, documented on Day 3).
+- The external contract doesn't change: headerless CSV in, one score per row
+  out — the data capture and Day 3 don't see the difference.
 
-## D26 — La capture se filtre par l'horodatage de l'inférence, pas du fichier (29/07/2026)
+## D26 — Capture is filtered by the inference's timestamp, not the file's (07/29/2026)
 
-- Écarter les invocations de la construction de la baseline en filtrant les fichiers de
-  capture par leur `LastModified` ne suffit pas : le fichier atterrit une à deux minutes
-  **après** `baseline.csv`, et passe le filtre. Constaté le 29/07 : 423 « prédictions de
-  production » lues dont les 392 lignes de la baseline, p = 1,0000 sur toutes les
-  colonnes — la référence comparée à elle-même, dérive invisible à jamais.
-- Le filtre porte désormais sur `eventMetadata.inferenceTime` de **chaque
-  enregistrement** (le moment où l'endpoint a répondu). La date du fichier reste un
-  pré-filtre, valable dans un seul sens. Un enregistrement sans horodatage lisible est
-  conservé : mieux vaut une ligne de trop qu'une production silencieusement ignorée.
-- Vérifié sur la capture réelle : 21 prédictions retenues sur 423, et des p-values enfin
-  dispersées (score : p = 0,4759) au lieu d'un 1,0000 uniforme.
+- Excluding baseline-construction invocations by filtering capture files by
+  their `LastModified` isn't enough: the file lands one to two minutes **after**
+  `baseline.csv`, and passes the filter. Found on 07/29: 423 "production
+  predictions" read of which 392 rows were the baseline itself, p = 1.0000 on
+  every column — the reference compared against itself, drift invisible
+  forever.
+- The filter now targets **each record's** `eventMetadata.inferenceTime` (the
+  moment the endpoint responded). The file date remains a pre-filter, valid
+  only in one direction. A record with no readable timestamp is kept: better
+  one extra row than a production silently ignored.
+- Verified on real capture: 21 predictions retained out of 423, and finally
+  scattered p-values (score: p = 0.4759) instead of a uniform 1.0000.
 
-## D27 — ECS Exec ouvre le canal SSM du formateur, et exige `ssmmessages` (29/07/2026)
+## D27 — ECS Exec opens the trainer's SSM channel, and requires `ssmmessages` (07/29/2026)
 
-- Sans workstation en marche (elles n'existent que pendant la formation, l'AMI se
-  construisant la veille — cf. `infra/ami/README.md`), le formateur n'a aucun
-  point d'entrée dans le VPC pour joindre l'ALB interne. La tâche ECS du binôme en est
-  un : le service est créé avec `enable_execute_command`, et le tunnel
-  `AWS-StartPortForwardingSessionToRemoteHost` se monte sur la cible
+- Without a running workstation (they only exist during the training, the AMI
+  being built the day before — cf. `infra/ami/README.md`), the trainer has no
+  entry point into the VPC to reach the internal ALB. The pair's ECS task is
+  one: the service is created with `enable_execute_command`, and the
+  `AWS-StartPortForwardingSessionToRemoteHost` tunnel is set up on target
   `ecs:<cluster>_<task-id>_<runtime-id>`.
-- Le piège, constaté le 29/07 : activer l'Exec côté service ne suffit pas. L'agent
-  `ExecuteCommandAgent` affiche `RUNNING` dans `describe-tasks` mais chaque
-  `start-session` échoue en `TargetNotConnected` tant que le **rôle de tâche** n'accorde
-  pas les quatre actions `ssmmessages:*` (canaux de contrôle et de données). Le statut de
-  l'agent dit qu'il a démarré, pas qu'il a pu ouvrir son canal.
-- Correctif dans le socle (`OuvrirLeCanalExecSSM`, `socle/iam.tf`), appliqué aux six
-  rôles. La campagne navigateur du 29/07 (captures du J2) est passée par ce tunnel.
+- The trap, found on 07/29: enabling Exec on the service side isn't enough. The
+  `ExecuteCommandAgent` shows `RUNNING` in `describe-tasks` but every
+  `start-session` fails with `TargetNotConnected` as long as the **task role**
+  doesn't grant the four `ssmmessages:*` actions (control and data channels).
+  The agent's status saying it started doesn't mean it managed to open its
+  channel.
+- Fix in the socle (`OpenTheExecSSMChannel`, `socle/iam.tf`), applied to the six
+  roles. The 07/29 browser campaign (Day 2 captures) went through this tunnel.
